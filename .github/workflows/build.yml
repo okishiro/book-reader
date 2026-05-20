@@ -26,16 +26,17 @@ jobs:
     - name: Install Fyne CLI Tools
       run: go install fyne.io/tools/cmd/fyne@latest
 
-    - name: Pre-build Go Binary
+    - name: Create Temporary App Icon
       run: |
-        # Compile your custom Go file into a standard Linux binary executable named 'main'
-        go build -o main claude.go
+        # Generate a simple, valid 512x512 transparent PNG icon so Fyne can pass validation
+        # If you have your own icon later, replace Icon.png in your repo
+        wget -O Icon.png https://raw.githubusercontent.com/fyne-io/fyne/master/img/fyne.png
 
     - name: Compile Android APK
       run: |
         export ANDROID_NDK_HOME=$ANDROID_HOME/ndk-bundle
-        # Using the short flag '--id' and explicitly tracking our '--exe' binary location
-        fyne package --os android --id com.myself.ereader --exe main --name EReader
+        # Let Fyne build the root package directly, passing the icon parameter explicitly
+        fyne package --os android --id com.myself.ereader --name EReader --icon Icon.png
 
     - name: Upload Finished APK Artifact
       uses: actions/upload-artifact@v4
