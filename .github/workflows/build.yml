@@ -26,11 +26,16 @@ jobs:
     - name: Install Fyne CLI Tools
       run: go install fyne.io/tools/cmd/fyne@latest
 
+    - name: Pre-build Go Binary
+      run: |
+        # Compile your custom Go file into a standard Linux binary executable named 'main'
+        go build -o main claude.go
+
     - name: Compile Android APK
       run: |
         export ANDROID_NDK_HOME=$ANDROID_HOME/ndk-bundle
-        # Pointing explicitly to your source file 'claude.go'
-        fyne package -os android -appID com.myself.ereader -src claude.go
+        # Using the short flag '--id' and explicitly tracking our '--exe' binary location
+        fyne package --os android --id com.myself.ereader --exe main --name EReader
 
     - name: Upload Finished APK Artifact
       uses: actions/upload-artifact@v4
