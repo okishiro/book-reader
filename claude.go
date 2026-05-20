@@ -29,13 +29,54 @@ import (
 )
 
 // ────────────────────────────────────────────────────────────────
-//  Fixed layout — Perfectly aligns and balances blocks in center
+//  Mobile Gesture Surface (Swipe Detection using Draggable)
+// ────────────────────────────────────────────────────────────────
+
+type SwipeableCanvas struct {
+	widget.BaseWidget
+	content   fyne.CanvasObject
+	onSwipeL  func()
+	onSwipeR  func()
+	dragTotal float32
+}
+
+func NewSwipeableCanvas(content fyne.CanvasObject, onLeft, onRight func()) *SwipeableCanvas {
+	s := &SwipeableCanvas{content: content, onSwipeL: onLeft, onSwipeR: onRight}
+	s.ExtendBaseWidget(s)
+	return s
+}
+
+func (s *SwipeableCanvas) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(s.content)
+}
+
+func (s *SwipeableCanvas) Dragged(e *fyne.DragEvent) {
+	// Accumulate drag metrics across the horizontal plane
+	s.dragTotal += e.Dragged.DX
+}
+
+func (s *SwipeableCanvas) DragEnd() {
+	const swipeThreshold float32 = 35.0 // Min pixels to register an active swipe
+
+	if s.dragTotal < -swipeThreshold {
+		if s.onSwipeL != nil {
+			s.onSwipeL()
+		}
+	} else if s.dragTotal > swipeThreshold {
+		if s.onSwipeR != nil {
+			s.onSwipeR()
+		}
+	}
+	s.dragTotal = 0 // Wipe stack for subsequent drag frames
+}
+
+// ────────────────────────────────────────────────────────────────
+//  Fixed layout — Aligns blocks in the center of mobile screen
 // ────────────────────────────────────────────────────────────────
 
 type fixedLayout struct{ size fyne.Size }
 
 func (f fixedLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
-	// Dynamically calculate the center boundaries for absolute positioning
 	posX := (parentSize.Width - f.size.Width) / 2
 	posY := (parentSize.Height - f.size.Height) / 2
 
@@ -80,7 +121,7 @@ func (t *ReaderTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant)
 }
 
 // ────────────────────────────────────────────────────────────────
-//  Window dimensions  (portrait mobile footprint)
+//  Dimensions (Portrait Mobile Viewport)
 // ────────────────────────────────────────────────────────────────
 
 const (
@@ -88,16 +129,12 @@ const (
 	winH float32 = 680
 
 	textBoxW float32 = 358
-	textBoxH float32 = 450
+	textBoxH float32 = 540
 )
-
-// ────────────────────────────────────────────────────────────────
-//  Persistence Data Structures
-// ────────────────────────────────────────────────────────────────
 
 type BookProgress struct {
 	Chapter int `json:"chapter"`
-	Page    int `json:"page"` 
+	Page    int `json:"page"`
 }
 
 type AppStateData struct {
@@ -109,10 +146,6 @@ type PageContent struct {
 	Text    string
 	ImgData image.Image
 }
-
-// ────────────────────────────────────────────────────────────────
-//  App state
-// ────────────────────────────────────────────────────────────────
 
 type ReaderApp struct {
 	rc           *epub.ReadCloser
@@ -131,23 +164,20 @@ type ReaderApp struct {
 	available []string
 	chapCache map[int][]PageContent
 
-	// Global Datastructure Map
 	trackingState AppStateData
 
-	// UI controls
+	// UI Controls
 	textLabel   *widget.Label
 	imageCanvas *canvas.Image
 	contentBox  *fyne.Container
 
-	// Feature States
+	// Mobile UX state tracking
+	inReaderView bool
+
 	isBold      bool
 	isJustified bool
 	currentFace string
 }
-
-// ────────────────────────────────────────────────────────────────
-//  main
-// ────────────────────────────────────────────────────────────────
 
 func main() {
 	myApp := app.New()
@@ -179,7 +209,16 @@ func main() {
 	}
 
 	state.loadStateFromFile()
-	state.refreshLibrary()
+
+	// FIXED: Intercept Mobile Back / Desktop Escape keys cleanly
+	myWindow.Canvas().SetOnTypedKey(func(k *fyne.KeyEvent) {
+		if k.Name == fyne.KeyEscape {
+			if state.inReaderView {
+				state.handleMobileBackGesture()
+				return
+			}
+		}
+	})
 
 	myWindow.SetContent(state.buildLibraryScreen())
 	myWindow.SetFixedSize(true)
@@ -192,14 +231,20 @@ func main() {
 	}
 }
 
+func (r *ReaderApp) handleMobileBackGesture() {
+	r.saveStateToDisk()
+	r.inReaderView = false
+	r.window.SetContent(r.buildLibraryScreen())
+}
+
 // ────────────────────────────────────────────────────────────────
-//  Persistence Engine Operations
+//  Persistence Engine
 // ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) loadStateFromFile() {
 	file, err := os.Open(r.dbPath)
 	if err != nil {
-		return 
+		return
 	}
 	defer file.Close()
 
@@ -214,7 +259,7 @@ func (r *ReaderApp) saveStateToDisk() {
 	if r.currentBook == "" {
 		return
 	}
-	
+
 	r.trackingState.BookTracking[r.currentBook] = BookProgress{
 		Chapter: r.currentChap,
 		Page:    r.currentPage,
@@ -236,6 +281,9 @@ func (r *ReaderApp) saveStateToDisk() {
 // ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
+	r.inReaderView = false
+	r.refreshLibrary()
+
 	title := canvas.NewText("MY LIBRARY", color.White)
 	title.TextSize = 18
 	title.TextStyle = fyne.TextStyle{Bold: true}
@@ -261,7 +309,6 @@ func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 				return
 			}
 
-			r.refreshLibrary()
 			r.window.SetContent(r.buildLibraryScreen())
 		}, r.window)
 		fd.SetFilter(storage.NewExtensionFileFilter([]string{".epub"}))
@@ -316,39 +363,27 @@ func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 }
 
 // ────────────────────────────────────────────────────────────────
-//  Screen: Reader
+//  Screen: Reader (Swipe Architecture Integration)
 // ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
-	// Standard aligned label setups
+	r.inReaderView = true
+
 	r.textLabel = widget.NewLabel("")
 	r.textLabel.Wrapping = fyne.TextWrapWord
-	r.textLabel.Alignment = fyne.TextAlignLeading // Left-aligned block text for natural reading styles
+	r.textLabel.Alignment = fyne.TextAlignLeading
 
 	r.imageCanvas = canvas.NewImageFromImage(nil)
 	r.imageCanvas.FillMode = canvas.ImageFillContain
 
-	// Content container layout
 	r.contentBox = container.NewMax(r.textLabel)
-
-	backBtn := widget.NewButton("← Lib", func() {
-		r.saveStateToDisk() 
-		r.window.SetContent(r.buildLibraryScreen())
-	})
 
 	optionsBtn := widget.NewButtonWithIcon("", theme.SettingsIcon(), func() {
 		r.showOptionsDialog()
 	})
 
-	topBarLayout := container.NewBorder(nil, nil, backBtn, optionsBtn, nil)
+	topBarLayout := container.NewBorder(nil, nil, nil, optionsBtn, container.NewCenter(canvas.NewText(" ", color.Transparent)))
 
-	prevPage := widget.NewButton("◀", func() { r.turnPage(-1) })
-	nextPage := widget.NewButton("▶", func() { r.turnPage(1) })
-
-	bottomBar := container.NewBorder(nil, nil, prevPage, nextPage, container.NewCenter())
-
-	// INNER CANVAS CENTERING SYSTEM:
-	// Clamps the textual canvas space block and relies on fixedLayout centering offsets
 	textClampedBlock := container.New(
 		fixedLayout{fyne.NewSize(textBoxW - 20, textBoxH - 20)},
 		r.contentBox,
@@ -356,17 +391,22 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 
 	cardContentLayout := container.New(
 		fixedLayout{fyne.NewSize(textBoxW, textBoxH)},
-		canvas.NewRectangle(color.Black), // Background shield card
+		canvas.NewRectangle(color.Black),
 		textClampedBlock,
+	)
+
+	// Custom Swiping component wrapper 
+	gestureSurface := NewSwipeableCanvas(cardContentLayout,
+		func() { r.turnPage(1) },  // Left Swipe -> Next Page
+		func() { r.turnPage(-1) }, // Right Swipe -> Previous Page
 	)
 
 	bg := canvas.NewRectangle(color.Black)
 
 	inner := container.NewBorder(
 		container.NewVBox(container.NewPadded(topBarLayout), widget.NewSeparator()),
-		container.NewVBox(widget.NewSeparator(), container.NewPadded(bottomBar)),
-		nil, nil,
-		cardContentLayout, // Injects perfectly aligned display block to center area frame
+		nil, nil, nil,
+		gestureSurface,
 	)
 
 	return container.New(fixedLayout{fyne.NewSize(winW, winH)},
@@ -376,7 +416,7 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 }
 
 // ────────────────────────────────────────────────────────────────
-//  Hidden Configuration Square Overlay
+//  Configuration Overlay Options Form
 // ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) showOptionsDialog() {
@@ -442,15 +482,15 @@ func (r *ReaderApp) showOptionsDialog() {
 		if val, err := strconv.Atoi(strings.TrimSpace(wordsEntry.Text)); err == nil && val > 5 {
 			if r.wordsPerPage != val {
 				r.wordsPerPage = val
-				r.chapCache = make(map[int][]PageContent) 
-				r.pages = r.chapPages(r.currentChap) 
+				r.chapCache = make(map[int][]PageContent) // Clear outdated caches
+				r.pages = r.chapPages(r.currentChap)     // Recalculate word layout rules mapping
 				if r.currentPage >= len(r.pages) {
 					r.currentPage = 0
 				}
 				r.render()
 			}
 		}
-		r.saveStateToDisk() 
+		r.saveStateToDisk()
 	})
 	d.Resize(fyne.NewSize(320, 310))
 	d.Show()
@@ -558,7 +598,7 @@ func (r *ReaderApp) turnPage(delta int) {
 	}
 	r.currentPage = next
 	r.render()
-	r.saveStateToDisk() 
+	r.saveStateToDisk()
 }
 
 func (r *ReaderApp) render() {
@@ -732,10 +772,6 @@ func fillLineSpaces(words []string, currentLen, targetWidth int) string {
 	return s.String()
 }
 
-// ────────────────────────────────────────────────────────────────
-//  HTML → plain text
-// ────────────────────────────────────────────────────────────────
-
 func htmlToPlainText(src string) string {
 	src = reBlock(`<style[^>]*>[\s\S]*?</style>`).ReplaceAllString(src, "")
 	src = reBlock(`<script[^>]*>[\s\S]*?</script>`).ReplaceAllString(src, "")
@@ -756,10 +792,6 @@ func htmlToPlainText(src string) string {
 func reBlock(pattern string) *regexp.Regexp {
 	return regexp.MustCompile(`(?i)` + pattern)
 }
-
-// ────────────────────────────────────────────────────────────────
-//  Library helpers
-// ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) refreshLibrary() {
 	files, _ := os.ReadDir(r.epubsDir)
