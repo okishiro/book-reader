@@ -1,8 +1,13 @@
 {
   "books": {
     "A Moveable Feast (Hemingway Ernest) (z-library.sk, 1lib.sk, z-lib.sk).epub": {
-      "chapter": 1,
-      "page": 5
+      "chapter": 3,
+      "page": 2
     }
-  }
+  },
+  "font_size": 21,
+  "words_per_page": 90,
+  "vert_bias": 100,
+  "bold_text": false,
+  "monospace": false
 }

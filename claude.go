@@ -51,12 +51,11 @@ func (s *SwipeableCanvas) CreateRenderer() fyne.WidgetRenderer {
 }
 
 func (s *SwipeableCanvas) Dragged(e *fyne.DragEvent) {
-	// Accumulate drag metrics across the horizontal plane
 	s.dragTotal += e.Dragged.DX
 }
 
 func (s *SwipeableCanvas) DragEnd() {
-	const swipeThreshold float32 = 35.0 // Min pixels to register an active swipe
+	const swipeThreshold float32 = 35.0
 
 	if s.dragTotal < -swipeThreshold {
 		if s.onSwipeL != nil {
@@ -67,7 +66,7 @@ func (s *SwipeableCanvas) DragEnd() {
 			s.onSwipeR()
 		}
 	}
-	s.dragTotal = 0 // Wipe stack for subsequent drag frames
+	s.dragTotal = 0
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -88,6 +87,55 @@ func (f fixedLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
 func (f fixedLayout) MinSize(_ []fyne.CanvasObject) fyne.Size { return f.size }
 
 // ────────────────────────────────────────────────────────────────
+//  5-Zone Dynamic Position Layout
+// ────────────────────────────────────────────────────────────────
+
+type zoneLayout struct {
+	zoneIndex int // 0 = Top, 1 = Upper-Mid, 2 = Center, 3 = Lower-Mid, 4 = Bottom
+}
+
+func (z zoneLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
+	// Maps the 5 selections explicitly to screen math multipliers
+	var bias float32
+	switch z.zoneIndex {
+	case 1:
+		bias = 0.25 // Upper-Mid
+	case 2:
+		bias = 0.50 // Center
+	case 3:
+		bias = 0.75 // Lower-Mid
+	case 4:
+		bias = 1.00 // Bottom
+	default:
+		bias = 0.00 // Top
+	}
+
+	for _, o := range objs {
+		minSize := o.MinSize()
+		if minSize.Height <= 0 {
+			minSize.Height = 120
+		}
+
+		// Calculate available fluid boundary based directly on current layout dimensions
+		availH := parentSize.Height - minSize.Height
+		if availH < 0 {
+			availH = 0
+		}
+
+		posY := availH * bias
+		o.Move(fyne.NewPos(0, posY))
+		o.Resize(fyne.NewSize(parentSize.Width, minSize.Height))
+	}
+}
+
+func (z zoneLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
+	if len(objs) == 0 {
+		return fyne.NewSize(textBoxW-20, textBoxH-20)
+	}
+	return objs[0].MinSize()
+}
+
+// ────────────────────────────────────────────────────────────────
 //  Theme & Typography Configurations
 // ────────────────────────────────────────────────────────────────
 
@@ -95,6 +143,7 @@ type ReaderTheme struct {
 	fyne.Theme
 	fontSize  float32
 	fontStyle fyne.TextStyle
+	fontName  string
 }
 
 func (t *ReaderTheme) Size(name fyne.ThemeSizeName) float32 {
@@ -102,6 +151,16 @@ func (t *ReaderTheme) Size(name fyne.ThemeSizeName) float32 {
 		return t.fontSize
 	}
 	return t.Theme.Size(name)
+}
+
+func (t *ReaderTheme) Font(style fyne.TextStyle) fyne.Resource {
+	switch t.fontName {
+	case "Serif":
+		style.Symbol = true
+	case "Monospace":
+		style.Monospace = true
+	}
+	return t.Theme.Font(style)
 }
 
 func (t *ReaderTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
@@ -156,27 +215,25 @@ type ReaderApp struct {
 	currentPage  int
 	wordsPerPage int
 
-	myApp     fyne.App
-	window    fyne.Window
-	rt        *ReaderTheme
-	epubsDir  string
-	dbPath    string
-	available []string
-	chapCache map[int][]PageContent
-
+	myApp         fyne.App
+	window        fyne.Window
+	rt            *ReaderTheme
+	epubsDir      string
+	dbPath        string
+	available     []string
+	chapCache     map[int][]PageContent
 	trackingState AppStateData
 
-	// UI Controls
 	textLabel   *widget.Label
 	imageCanvas *canvas.Image
 	contentBox  *fyne.Container
+	zoneAdjust  *fyne.Container
 
-	// Mobile UX state tracking
 	inReaderView bool
-
-	isBold      bool
-	isJustified bool
-	currentFace string
+	isBold       bool
+	isJustified  bool
+	currentFace  string
+	selectedZone int // 0 to 4
 }
 
 func main() {
@@ -187,6 +244,7 @@ func main() {
 		Theme:     theme.DarkTheme(),
 		fontSize:  17,
 		fontStyle: fyne.TextStyle{},
+		fontName:  "Sans-Serif",
 	}
 	myApp.Settings().SetTheme(rt)
 
@@ -203,6 +261,7 @@ func main() {
 		chapCache:    make(map[int][]PageContent),
 		wordsPerPage: 55,
 		currentFace:  "Sans-Serif",
+		selectedZone: 0, // Default to Top Position
 		trackingState: AppStateData{
 			BookTracking: make(map[string]BookProgress),
 		},
@@ -210,7 +269,6 @@ func main() {
 
 	state.loadStateFromFile()
 
-	// FIXED: Intercept Mobile Back / Desktop Escape keys cleanly
 	myWindow.Canvas().SetOnTypedKey(func(k *fyne.KeyEvent) {
 		if k.Name == fyne.KeyEscape {
 			if state.inReaderView {
@@ -363,7 +421,7 @@ func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 }
 
 // ────────────────────────────────────────────────────────────────
-//  Screen: Reader (Swipe Architecture Integration)
+//  Screen: Reader
 // ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
@@ -378,6 +436,9 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 
 	r.contentBox = container.NewMax(r.textLabel)
 
+	// Custom 5-zone mathematical anchoring container layout wrapper
+	r.zoneAdjust = container.New(zoneLayout{zoneIndex: r.selectedZone}, r.contentBox)
+
 	optionsBtn := widget.NewButtonWithIcon("", theme.SettingsIcon(), func() {
 		r.showOptionsDialog()
 	})
@@ -386,7 +447,7 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 
 	textClampedBlock := container.New(
 		fixedLayout{fyne.NewSize(textBoxW - 20, textBoxH - 20)},
-		r.contentBox,
+		r.zoneAdjust,
 	)
 
 	cardContentLayout := container.New(
@@ -395,10 +456,9 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 		textClampedBlock,
 	)
 
-	// Custom Swiping component wrapper 
 	gestureSurface := NewSwipeableCanvas(cardContentLayout,
-		func() { r.turnPage(1) },  // Left Swipe -> Next Page
-		func() { r.turnPage(-1) }, // Right Swipe -> Previous Page
+		func() { r.turnPage(1) },
+		func() { r.turnPage(-1) },
 	)
 
 	bg := canvas.NewRectangle(color.Black)
@@ -424,14 +484,14 @@ func (r *ReaderApp) showOptionsDialog() {
 		if r.rt.fontSize > 11 {
 			r.rt.fontSize -= 1
 			r.myApp.Settings().SetTheme(r.rt)
-			r.textLabel.Refresh()
+			r.render()
 		}
 	})
 	fontUp := widget.NewButton("A+", func() {
 		if r.rt.fontSize < 30 {
 			r.rt.fontSize += 1
 			r.myApp.Settings().SetTheme(r.rt)
-			r.textLabel.Refresh()
+			r.render()
 		}
 	})
 	sizeRow := container.NewGridWithColumns(2, fontDown, fontUp)
@@ -453,16 +513,43 @@ func (r *ReaderApp) showOptionsDialog() {
 	})
 	justifyCheck.SetChecked(r.isJustified)
 
+	// 5-ZONE EXPLICIT ALIGNMENT SELECTION OVERLAY
+	zoneSelect := widget.NewSelect([]string{"Top", "Upper-Mid", "Center", "Lower-Mid", "Bottom"}, func(chosen string) {
+		switch chosen {
+		case "Upper-Mid":
+			r.selectedZone = 1
+		case "Center":
+			r.selectedZone = 2
+		case "Lower-Mid":
+			r.selectedZone = 3
+		case "Bottom":
+			r.selectedZone = 4
+		default:
+			r.selectedZone = 0 // Top
+		}
+		r.zoneAdjust.Layout = zoneLayout{zoneIndex: r.selectedZone}
+		r.zoneAdjust.Refresh()
+	})
+
+	// Safely map active position string variant to overlay select value initialization
+	var zoneString string
+	switch r.selectedZone {
+	case 1:
+		zoneString = "Upper-Mid"
+	case 2:
+		zoneString = "Center"
+	case 3:
+		zoneString = "Lower-Mid"
+	case 4:
+		zoneString = "Bottom"
+	default:
+		zoneString = "Top"
+	}
+	zoneSelect.SetSelected(zoneString)
+
 	fontFaceSelect := widget.NewSelect([]string{"Sans-Serif", "Serif", "Monospace"}, func(chosen string) {
 		r.currentFace = chosen
-		switch chosen {
-		case "Serif":
-			r.rt.fontStyle.Monospace = false
-		case "Monospace":
-			r.rt.fontStyle.Monospace = true
-		default:
-			r.rt.fontStyle.Monospace = false
-		}
+		r.rt.fontName = chosen
 		r.applyTypographyRules()
 	})
 	fontFaceSelect.SetSelected(r.currentFace)
@@ -474,6 +561,7 @@ func (r *ReaderApp) showOptionsDialog() {
 		widget.NewFormItem("Font Face", fontFaceSelect),
 		widget.NewFormItem("Text Scaling", sizeRow),
 		widget.NewFormItem("Format Style", container.NewVBox(boldCheck, justifyCheck)),
+		widget.NewFormItem("Shift Text Location", zoneSelect),
 		widget.NewFormItem("Words Per Page", wordsEntry),
 	)
 
@@ -482,17 +570,17 @@ func (r *ReaderApp) showOptionsDialog() {
 		if val, err := strconv.Atoi(strings.TrimSpace(wordsEntry.Text)); err == nil && val > 5 {
 			if r.wordsPerPage != val {
 				r.wordsPerPage = val
-				r.chapCache = make(map[int][]PageContent) // Clear outdated caches
-				r.pages = r.chapPages(r.currentChap)     // Recalculate word layout rules mapping
+				r.chapCache = make(map[int][]PageContent)
+				r.pages = r.chapPages(r.currentChap)
 				if r.currentPage >= len(r.pages) {
 					r.currentPage = 0
 				}
-				r.render()
 			}
 		}
+		r.render()
 		r.saveStateToDisk()
 	})
-	d.Resize(fyne.NewSize(320, 310))
+	d.Resize(fyne.NewSize(330, 360))
 	d.Show()
 }
 
@@ -500,7 +588,7 @@ func (r *ReaderApp) applyTypographyRules() {
 	r.rt.fontStyle.Bold = r.isBold
 	r.textLabel.TextStyle = r.rt.fontStyle
 	r.myApp.Settings().SetTheme(r.rt)
-	r.textLabel.Refresh()
+	r.render()
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -632,6 +720,10 @@ func (r *ReaderApp) render() {
 	}
 
 	r.contentBox.Refresh()
+	if r.zoneAdjust != nil {
+		r.zoneAdjust.Layout = zoneLayout{zoneIndex: r.selectedZone}
+		r.zoneAdjust.Refresh()
+	}
 }
 
 // ────────────────────────────────────────────────────────────────
