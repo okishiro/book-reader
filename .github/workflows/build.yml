@@ -21,21 +21,20 @@ jobs:
     - name: Install Linux Graphic Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libasound2-dev
+        sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libasound2-dev imagemagick
 
     - name: Install Fyne CLI Tools
       run: go install fyne.io/tools/cmd/fyne@latest
 
     - name: Create Temporary App Icon
       run: |
-        # Generate a simple, valid 512x512 transparent PNG icon so Fyne can pass validation
-        # If you have your own icon later, replace Icon.png in your repo
-        wget -O Icon.png https://raw.githubusercontent.com/fyne-io/fyne/master/img/fyne.png
+        # Use ImageMagick (installed above) to build a native 512x512 blue placeholder icon locally
+        convert -size 512x512 xc:blue Icon.png
 
     - name: Compile Android APK
       run: |
         export ANDROID_NDK_HOME=$ANDROID_HOME/ndk-bundle
-        # Let Fyne build the root package directly, passing the icon parameter explicitly
+        # Compile using local generated Icon asset
         fyne package --os android --id com.myself.ereader --name EReader --icon Icon.png
 
     - name: Upload Finished APK Artifact
