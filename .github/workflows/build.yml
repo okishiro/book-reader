@@ -1,0 +1,39 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: 
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup Go Engine
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+
+    - name: Install Linux Graphic Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libasound2-dev
+
+    - name: Install Fyne CLI Tools
+      run: go install fyne.io/tools/cmd/fyne@latest
+
+    - name: Compile Android APK
+      run: |
+        export ANDROID_NDK_HOME=$ANDROID_HOME/ndk-bundle
+        # Pointing explicitly to your source file 'claude.go'
+        fyne package -os android -appID com.myself.ereader -src claude.go
+
+    - name: Upload Finished APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ereader-apk
+        path: ./*.apk
