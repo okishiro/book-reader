@@ -39,8 +39,8 @@ jobs:
 
     - name: Compile and Package Android APK
       run: |
-        # Renamed to lowercase 'eread' as requested
-        fyne package -v --os android --id com.myself.eread --name eread --icon Icon.png
+        # Fixed: Removed the invalid -v flag
+        fyne package --os android --id com.myself.eread --name eread --icon Icon.png
 
     - name: Verify APK Generation
       run: |
@@ -50,7 +50,7 @@ jobs:
     - name: Upload Finished APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: err
+        name: eread-apk
         path: |
           ./*.apk
           eread.apk
