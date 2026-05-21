@@ -55,7 +55,7 @@ func (s *SwipeableCanvas) Dragged(e *fyne.DragEvent) {
 }
 
 func (s *SwipeableCanvas) DragEnd() {
-	const swipeThreshold float32 = 30.0 // Adjusted for responsive mobile response
+	const swipeThreshold float32 = 30.0
 
 	if s.dragTotal < -swipeThreshold {
 		if s.onSwipeL != nil {
@@ -69,15 +69,13 @@ func (s *SwipeableCanvas) DragEnd() {
 	s.dragTotal = 0
 }
 
-// Tapped implements side-screen tapping for forward/backward page navigation
 func (s *SwipeableCanvas) Tapped(e *fyne.PointEvent) {
 	bounds := s.Size()
-	// Left 35% of the screen -> Go to Previous page
 	if e.Position.X < bounds.Width*0.35 {
 		if s.onSwipeR != nil {
 			s.onSwipeR()
 		}
-	} else if e.Position.X > bounds.Width*0.65 { // Right 35% of the screen -> Go to Next page
+	} else if e.Position.X > bounds.Width*0.65 {
 		if s.onSwipeL != nil {
 			s.onSwipeL()
 		}
@@ -131,7 +129,6 @@ func (z zoneLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
 		if minSize.Height <= 0 {
 			minSize.Height = 140
 		}
-
 		if minSize.Width < parentSize.Width {
 			minSize.Width = parentSize.Width
 		}
@@ -160,15 +157,13 @@ func (z zoneLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
 
 type ReaderTheme struct {
 	fyne.Theme
-	fontSize     float32
-	fontStyle    fyne.TextStyle
-	fontName     string
-	isConfiguring bool // Evaluated flag to shield settings panel text size changes
+	fontSize      float32
+	fontStyle     fyne.TextStyle
+	fontName      string
+	isConfiguring bool
 }
 
 func (t *ReaderTheme) Size(name fyne.ThemeSizeName) float32 {
-	// If the application engine tells us it's building/rendering a dialog window,
-	// enforce the clean, constant baseline font-scaling size.
 	if name == theme.SizeNameText && !t.isConfiguring {
 		return t.fontSize
 	}
@@ -283,7 +278,6 @@ func main() {
 
 	state.loadStateFromFile()
 
-	// Handles Desktop Escape key AND Mobile Back gesture interactions
 	myWindow.Canvas().SetOnTypedKey(func(k *fyne.KeyEvent) {
 		if k.Name == fyne.KeyEscape || k.Name == "Back" {
 			if state.inReaderView {
@@ -365,7 +359,8 @@ func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 			defer uc.Close()
 
 			fileName := uc.URI().Name()
-			if !strings.HasSuffix(strings.ToLower(fileName), ".epub") {
+			lowerName := strings.ToLower(fileName)
+			if !strings.HasSuffix(lowerName, ".epub") {
 				dialog.ShowError(fmt.Errorf("Selected file is not a valid ePub package"), r.window)
 				return
 			}
@@ -385,7 +380,7 @@ func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 
 			r.window.SetContent(r.buildLibraryScreen())
 		}, r.window)
-		fd.SetFilter(storage.NewExtensionFileFilter([]string{".epub"}))
+		fd.SetFilter(storage.NewExtensionFileFilter([]string{".epub", ".EPUB"}))
 		fd.Show()
 	})
 	importBtn.Importance = widget.HighImportance
@@ -399,7 +394,13 @@ func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 		},
 		func(id widget.ListItemID, o fyne.CanvasObject) {
 			name := r.available[id]
-			display := strings.TrimSuffix(name, ".epub")
+			// Support removing extensions cleanly regardless of casing
+			var display string
+			if strings.HasSuffix(strings.ToLower(name), ".epub") {
+				display = name[:len(name)-5]
+			} else {
+				display = name
+			}
 			o.(*widget.Label).SetText(display)
 		},
 	)
@@ -485,7 +486,6 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 // ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) showOptionsDialog() {
-	// Direct system theme block activation to protect overlay menu styling
 	r.rt.isConfiguring = true
 	r.myApp.Settings().SetTheme(r.rt)
 
@@ -583,7 +583,6 @@ func (r *ReaderApp) showOptionsDialog() {
 			}
 		}
 		
-		// Remove system overlay flags and safely switch context back to book view
 		r.rt.isConfiguring = false
 		r.myApp.Settings().SetTheme(r.rt)
 		
@@ -595,10 +594,8 @@ func (r *ReaderApp) showOptionsDialog() {
 }
 
 func (r *ReaderApp) applyTypographyRules() {
-	r.rt.fontStyle.Bold = r.isBold
 	r.textLabel.TextStyle = r.rt.fontStyle
-	
-	// Triggers layout calculation logic for active viewport objects without impacting settings panel sizes
+	r.rt.fontStyle.Bold = r.isBold
 	if !r.rt.isConfiguring {
 		r.myApp.Settings().SetTheme(r.rt)
 	}
@@ -743,6 +740,7 @@ func (r *ReaderApp) chapPages(idx int) []PageContent {
 	return pages
 }
 
+// Case-Insensitive fallback matching ensures every standard variation of EPUB renders smoothly
 func (r *ReaderApp) parseAndPaginateChapter(idx int) []PageContent {
 	targetPath := r.spinePaths[idx]
 	book := r.rc.Rootfiles[0]
@@ -769,19 +767,29 @@ func (r *ReaderApp) parseAndPaginateChapter(idx int) []PageContent {
 	_, _ = io.Copy(buf, fd)
 	htmlContent := buf.String()
 
-	imgRegexp := regexp.MustCompile(`(?i)<img\s+[^>]*src=["']([^"']+)["'][^>]*>`)
+	// Enhanced regex captures standard img source formats as well as alternative SVG vector images
+	imgRegexp := regexp.MustCompile(`(?i)<img\s+[^>]*src=["']([^"']+)["'][^>]*>|<image\s+[^>]*href=["']([^"']+)["'][^>]*>`)
 	matches := imgRegexp.FindAllStringSubmatch(htmlContent, -1)
 
 	var dynamicPages []PageContent
 
 	for _, match := range matches {
 		imgSrc := match[1]
+		if imgSrc == "" {
+			imgSrc = match[2]
+		}
+		if imgSrc == "" {
+			continue
+		}
+
 		baseDir := filepath.Dir(targetPath)
 		resolvedImgPath := filepath.Clean(filepath.Join(baseDir, imgSrc))
 		resolvedImgPath = strings.ReplaceAll(resolvedImgPath, "\\", "/")
+		imgFilename := filepath.Base(resolvedImgPath)
 
 		for _, item := range book.Manifest.Items {
-			if item.HREF == resolvedImgPath {
+			// Looser flexible mapping to verify if resource paths match exactly or share an identical base image name
+			if item.HREF == resolvedImgPath || strings.EqualFold(item.HREF, resolvedImgPath) || strings.EqualFold(filepath.Base(item.HREF), imgFilename) {
 				if imgFile, err := item.Open(); err == nil {
 					imgBytes, _ := io.ReadAll(imgFile)
 					imgFile.Close()
@@ -893,8 +901,11 @@ func (r *ReaderApp) refreshLibrary() {
 	files, _ := os.ReadDir(r.epubsDir)
 	var list []string
 	for _, f := range files {
-		if !f.IsDir() && strings.HasSuffix(strings.ToLower(f.Name()), ".epub") {
-			list = append(list, f.Name())
+		if !f.IsDir() {
+			lowerName := strings.ToLower(f.Name())
+			if strings.HasSuffix(lowerName, ".epub") {
+				list = append(list, f.Name())
+			}
 		}
 	}
 	r.available = list
