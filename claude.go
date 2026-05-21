@@ -12,6 +12,7 @@ import (
 	_ "image/png"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -833,13 +834,15 @@ func (r *ReaderApp) parseAndPaginateChapter(idx int) []PageContent {
 			continue
 		}
 
-		baseDir := filepath.Dir(targetPath)
-		resolvedImgPath := filepath.Clean(filepath.Join(baseDir, imgSrc))
-		resolvedImgPath = strings.ReplaceAll(resolvedImgPath, "\\", "/")
-		imgFilename := filepath.Base(resolvedImgPath)
+		// FIXED: Use standard URL path logic ('path.Join') instead of platform native 'filepath.Join'.
+		// This keeps forward slashes intact on Android containers and avoids target mapping misses.
+		baseDir := path.Dir(targetPath)
+		resolvedImgPath := path.Clean(path.Join(baseDir, imgSrc))
+		imgFilename := path.Base(resolvedImgPath)
 
 		for _, item := range book.Manifest.Items {
-			if item.HREF == resolvedImgPath || strings.EqualFold(item.HREF, resolvedImgPath) || strings.EqualFold(filepath.Base(item.HREF), imgFilename) {
+			// FIXED: Enhanced structural fault tolerance. Matches clean targets or fallback filename configurations
+			if item.HREF == resolvedImgPath || strings.EqualFold(item.HREF, resolvedImgPath) || strings.EqualFold(path.Base(item.HREF), imgFilename) {
 				if imgFile, err := item.Open(); err == nil {
 					imgBytes, _ := io.ReadAll(imgFile)
 					imgFile.Close()
