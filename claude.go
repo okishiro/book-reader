@@ -358,11 +358,17 @@ func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 			}
 			defer uc.Close()
 
-			fileName := uc.URI().Name()
-			lowerName := strings.ToLower(fileName)
-			if !strings.HasSuffix(lowerName, ".epub") {
+			ext := strings.ToLower(uc.URI().Extension())
+			isEpubMime := strings.Contains(strings.ToLower(uc.URI().MimeType()), "epub")
+
+			if ext != ".epub" && !isEpubMime {
 				dialog.ShowError(fmt.Errorf("Selected file is not a valid ePub package"), r.window)
 				return
+			}
+
+			fileName := uc.URI().Name()
+			if !strings.HasSuffix(strings.ToLower(fileName), ".epub") {
+				fileName = fileName + ".epub"
 			}
 
 			dstPath := filepath.Join(r.epubsDir, fileName)
@@ -394,7 +400,6 @@ func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 		},
 		func(id widget.ListItemID, o fyne.CanvasObject) {
 			name := r.available[id]
-			// Support removing extensions cleanly regardless of casing
 			var display string
 			if strings.HasSuffix(strings.ToLower(name), ".epub") {
 				display = name[:len(name)-5]
@@ -562,12 +567,33 @@ func (r *ReaderApp) showOptionsDialog() {
 	wordsEntry := widget.NewEntry()
 	wordsEntry.SetText(strconv.Itoa(r.wordsPerPage))
 
+	// Setup Numerical Page Jump Calculations
+	globalCurrentPage := 1
+	for i := 0; i < r.currentChap; i++ {
+		globalCurrentPage += len(r.chapPages(i))
+	}
+	globalCurrentPage += r.currentPage
+
+	globalTotalPages := 0
+	for i := 0; i < len(r.spinePaths); i++ {
+		globalTotalPages += len(r.chapPages(i))
+	}
+	if globalTotalPages == 0 {
+		globalTotalPages = 1
+	}
+
+	pageEntry := widget.NewEntry()
+	pageEntry.SetText(strconv.Itoa(globalCurrentPage))
+	pageLimitHint := widget.NewLabel(fmt.Sprintf("/ %d", globalTotalPages))
+	pageRow := container.NewBorder(nil, nil, nil, pageLimitHint, pageEntry)
+
 	optionsForm := widget.NewForm(
 		widget.NewFormItem("Font Face", fontFaceSelect),
 		widget.NewFormItem("Text Scaling", sizeRow),
 		widget.NewFormItem("Format Style", container.NewVBox(boldCheck, justifyCheck)),
 		widget.NewFormItem("Shift Text Location", zoneSelect),
 		widget.NewFormItem("Words Per Page", wordsEntry),
+		widget.NewFormItem("Go to Page #", pageRow),
 	)
 
 	d := dialog.NewCustom("Text Options", "Save & Apply", optionsForm, r.window)
@@ -582,6 +608,29 @@ func (r *ReaderApp) showOptionsDialog() {
 				}
 			}
 		}
+
+		// Calculate exact landing coordinates from your numerical input entry
+		if targetPg, err := strconv.Atoi(strings.TrimSpace(pageEntry.Text)); err == nil {
+			if targetPg < 1 {
+				targetPg = 1
+			}
+			if targetPg > globalTotalPages {
+				targetPg = globalTotalPages
+			}
+
+			// Trace page input index backwards into your chapter spine layout structures
+			runningSum := 0
+			for cIdx := 0; cIdx < len(r.spinePaths); cIdx++ {
+				chSz := len(r.chapPages(cIdx))
+				if runningSum+chSz >= targetPg {
+					r.currentChap = cIdx
+					r.pages = r.chapPages(cIdx)
+					r.currentPage = (targetPg - 1) - runningSum
+					break
+				}
+				runningSum += chSz
+			}
+		}
 		
 		r.rt.isConfiguring = false
 		r.myApp.Settings().SetTheme(r.rt)
@@ -589,7 +638,7 @@ func (r *ReaderApp) showOptionsDialog() {
 		r.render()
 		r.saveStateToDisk()
 	})
-	d.Resize(fyne.NewSize(310, 350))
+	d.Resize(fyne.NewSize(310, 390))
 	d.Show()
 }
 
@@ -718,7 +767,11 @@ func (r *ReaderApp) render() {
 	} else {
 		text := currentPageContent.Text
 		if r.isJustified {
-			text = justifyTextBlock(text, int(r.window.Canvas().Size().Width)/10)
+			lineWidth := int(r.window.Canvas().Size().Width) / 10
+			if lineWidth < 15 {
+				lineWidth = 35 
+			}
+			text = justifyTextBlock(text, lineWidth)
 		}
 		r.textLabel.SetText(text)
 		r.contentBox.Add(r.textLabel)
@@ -740,7 +793,6 @@ func (r *ReaderApp) chapPages(idx int) []PageContent {
 	return pages
 }
 
-// Case-Insensitive fallback matching ensures every standard variation of EPUB renders smoothly
 func (r *ReaderApp) parseAndPaginateChapter(idx int) []PageContent {
 	targetPath := r.spinePaths[idx]
 	book := r.rc.Rootfiles[0]
@@ -767,7 +819,6 @@ func (r *ReaderApp) parseAndPaginateChapter(idx int) []PageContent {
 	_, _ = io.Copy(buf, fd)
 	htmlContent := buf.String()
 
-	// Enhanced regex captures standard img source formats as well as alternative SVG vector images
 	imgRegexp := regexp.MustCompile(`(?i)<img\s+[^>]*src=["']([^"']+)["'][^>]*>|<image\s+[^>]*href=["']([^"']+)["'][^>]*>`)
 	matches := imgRegexp.FindAllStringSubmatch(htmlContent, -1)
 
@@ -788,7 +839,6 @@ func (r *ReaderApp) parseAndPaginateChapter(idx int) []PageContent {
 		imgFilename := filepath.Base(resolvedImgPath)
 
 		for _, item := range book.Manifest.Items {
-			// Looser flexible mapping to verify if resource paths match exactly or share an identical base image name
 			if item.HREF == resolvedImgPath || strings.EqualFold(item.HREF, resolvedImgPath) || strings.EqualFold(filepath.Base(item.HREF), imgFilename) {
 				if imgFile, err := item.Open(); err == nil {
 					imgBytes, _ := io.ReadAll(imgFile)
@@ -838,9 +888,15 @@ func justifyTextBlock(text string, targetLineWidth int) string {
 
 	for _, w := range words {
 		if currentLen+len(currentLine)+len(w) > targetLineWidth {
-			result.WriteString(fillLineSpaces(currentLine, currentLen, targetLineWidth) + "\n")
-			currentLine = []string{w}
-			currentLen = len(w)
+			if len(currentLine) > 0 {
+				result.WriteString(fillLineSpaces(currentLine, currentLen, targetLineWidth) + "\n")
+				currentLine = []string{w}
+				currentLen = len(w)
+			} else {
+				result.WriteString(w + "\n")
+				currentLine = nil
+				currentLen = 0
+			}
 		} else {
 			currentLine = append(currentLine, w)
 			currentLen += len(w)
