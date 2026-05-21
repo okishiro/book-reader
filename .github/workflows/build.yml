@@ -33,17 +33,26 @@ jobs:
 
     - name: Auto-Detect and Export Android NDK Path
       run: |
-        # Locate whichever versioned NDK folder GitHub has pre-installed and export it to global env variables
-        echo "ANDROID_NDK_HOME=$(ls -d $ANDROID_HOME/ndk/* | head -n 1)" >> $GITHUB_ENV
+        NDK_PATH=$(ls -d $ANDROID_HOME/ndk/* | head -n 1)
+        echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+        echo "NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
 
     - name: Compile and Package Android APK
       run: |
-        # The Fyne builder now sees the valid NDK path exported automatically above
-        fyne package --os android --id com.myself.ereader --name EReader --icon Icon.png
+        # Renamed to lowercase 'eread' as requested
+        fyne package -v --os android --id com.myself.eread --name eread --icon Icon.png
+
+    - name: Verify APK Generation
+      run: |
+        echo "=== Checking Workspace for Target Binaries ==="
+        ls -la *.apk || echo "No APK found at root level!"
 
     - name: Upload Finished APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ereader-apk
-        path: ./*.apk
+        name: err
+        path: |
+          ./*.apk
+          eread.apk
+        if-no-files-found: error
         retention-days: 7
