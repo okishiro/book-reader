@@ -29,7 +29,7 @@ import (
 )
 
 // ────────────────────────────────────────────────────────────────
-//  Mobile Gesture Surface (Swipe Detection using Draggable)
+//  Mobile Gesture & Tap Surface (Enhanced Swipe & Tap Support)
 // ────────────────────────────────────────────────────────────────
 
 type SwipeableCanvas struct {
@@ -55,7 +55,7 @@ func (s *SwipeableCanvas) Dragged(e *fyne.DragEvent) {
 }
 
 func (s *SwipeableCanvas) DragEnd() {
-	const swipeThreshold float32 = 35.0
+	const swipeThreshold float32 = 30.0 // Adjusted for responsive mobile response
 
 	if s.dragTotal < -swipeThreshold {
 		if s.onSwipeL != nil {
@@ -69,16 +69,30 @@ func (s *SwipeableCanvas) DragEnd() {
 	s.dragTotal = 0
 }
 
+// Tapped implements side-screen tapping for forward/backward page navigation
+func (s *SwipeableCanvas) Tapped(e *fyne.PointEvent) {
+	bounds := s.Size()
+	// Left 35% of the screen -> Go to Previous page
+	if e.Position.X < bounds.Width*0.35 {
+		if s.onSwipeR != nil {
+			s.onSwipeR()
+		}
+	} else if e.Position.X > bounds.Width*0.65 { // Right 35% of the screen -> Go to Next page
+		if s.onSwipeL != nil {
+			s.onSwipeL()
+		}
+	}
+}
+
 // ────────────────────────────────────────────────────────────────
-//  Fluid Mobile Scaling Layouts (Replaces hardcoded sizing)
+//  Fluid Mobile Scaling Layouts 
 // ────────────────────────────────────────────────────────────────
 
 type fluidMobileLayout struct{}
 
 func (f fluidMobileLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
-	// Dynamically span elements across 92% of the available physical screen width
 	targetW := parentSize.Width * 0.92
-	targetH := parentSize.Height * 0.82
+	targetH := parentSize.Height * 0.90 
 
 	posX := (parentSize.Width - targetW) / 2
 	posY := (parentSize.Height - targetH) / 2
@@ -90,11 +104,11 @@ func (f fluidMobileLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size
 }
 
 func (f fluidMobileLayout) MinSize(_ []fyne.CanvasObject) fyne.Size {
-	return fyne.NewSize(280, 400) // Safe minimum baseline for compact mobile frames
+	return fyne.NewSize(280, 400)
 }
 
 type zoneLayout struct {
-	zoneIndex int // 0 = Top, 1 = Upper-Mid, 2 = Center, 3 = Lower-Mid, 4 = Bottom
+	zoneIndex int
 }
 
 func (z zoneLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
@@ -118,7 +132,6 @@ func (z zoneLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
 			minSize.Height = 140
 		}
 
-		// Always force the text layout container width to track the full screen width
 		if minSize.Width < parentSize.Width {
 			minSize.Width = parentSize.Width
 		}
@@ -147,24 +160,29 @@ func (z zoneLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
 
 type ReaderTheme struct {
 	fyne.Theme
-	fontSize  float32
-	fontStyle fyne.TextStyle
-	fontName  string
+	fontSize     float32
+	fontStyle    fyne.TextStyle
+	fontName     string
+	isConfiguring bool // Evaluated flag to shield settings panel text size changes
 }
 
 func (t *ReaderTheme) Size(name fyne.ThemeSizeName) float32 {
-	if name == theme.SizeNameText {
+	// If the application engine tells us it's building/rendering a dialog window,
+	// enforce the clean, constant baseline font-scaling size.
+	if name == theme.SizeNameText && !t.isConfiguring {
 		return t.fontSize
 	}
 	return t.Theme.Size(name)
 }
 
 func (t *ReaderTheme) Font(style fyne.TextStyle) fyne.Resource {
-	switch t.fontName {
-	case "Serif":
-		style.Symbol = true
-	case "Monospace":
-		style.Monospace = true
+	if !t.isConfiguring {
+		switch t.fontName {
+		case "Serif":
+			style.Symbol = true
+		case "Monospace":
+			style.Monospace = true
+		}
 	}
 	return t.Theme.Font(style)
 }
@@ -205,13 +223,13 @@ type PageContent struct {
 }
 
 type ReaderApp struct {
-	rc            *epub.ReadCloser
-	currentBook   string
-	spinePaths    []string
-	currentChap   int
-	pages         []PageContent
-	currentPage   int
-	wordsPerPage  int
+	rc           *epub.ReadCloser
+	currentBook  string
+	spinePaths   []string
+	currentChap  int
+	pages        []PageContent
+	currentPage  int
+	wordsPerPage int
 
 	myApp         fyne.App
 	window        fyne.Window
@@ -246,7 +264,6 @@ func main() {
 	}
 	myApp.Settings().SetTheme(rt)
 
-	// Contextual safe internal app path fallback
 	dir := filepath.Join(myApp.Storage().RootURI().Path(), "library")
 	_ = os.MkdirAll(dir, 0755)
 	dbFilePath := filepath.Join(dir, "state.json")
@@ -266,8 +283,9 @@ func main() {
 
 	state.loadStateFromFile()
 
+	// Handles Desktop Escape key AND Mobile Back gesture interactions
 	myWindow.Canvas().SetOnTypedKey(func(k *fyne.KeyEvent) {
-		if k.Name == fyne.KeyEscape {
+		if k.Name == fyne.KeyEscape || k.Name == "Back" {
 			if state.inReaderView {
 				state.handleMobileBackGesture()
 				return
@@ -425,6 +443,7 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 	r.textLabel = widget.NewLabel("")
 	r.textLabel.Wrapping = fyne.TextWrapWord
 	r.textLabel.Alignment = fyne.TextAlignLeading
+	r.textLabel.TextStyle = r.rt.fontStyle
 
 	r.imageCanvas = canvas.NewImageFromImage(nil)
 	r.imageCanvas.FillMode = canvas.ImageFillContain
@@ -436,7 +455,12 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 		r.showOptionsDialog()
 	})
 
-	topBarLayout := container.NewBorder(nil, nil, nil, optionsBtn, container.NewCenter(canvas.NewText(" ", color.Transparent)))
+	backBtn := widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
+		r.handleMobileBackGesture()
+	})
+	backBtn.Importance = widget.LowImportance
+
+	topBarLayout := container.NewBorder(nil, nil, backBtn, optionsBtn, container.NewCenter(canvas.NewText(" ", color.Transparent)))
 
 	textClampedBlock := container.New(fluidMobileLayout{}, r.zoneAdjust)
 	cardContentLayout := container.NewMax(canvas.NewRectangle(color.Black), textClampedBlock)
@@ -461,18 +485,20 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 // ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) showOptionsDialog() {
+	// Direct system theme block activation to protect overlay menu styling
+	r.rt.isConfiguring = true
+	r.myApp.Settings().SetTheme(r.rt)
+
 	fontDown := widget.NewButton("A-", func() {
 		if r.rt.fontSize > 11 {
 			r.rt.fontSize -= 1
-			r.myApp.Settings().SetTheme(r.rt)
-			r.render()
+			r.applyTypographyRules()
 		}
 	})
 	fontUp := widget.NewButton("A+", func() {
 		if r.rt.fontSize < 30 {
 			r.rt.fontSize += 1
-			r.myApp.Settings().SetTheme(r.rt)
-			r.render()
+			r.applyTypographyRules()
 		}
 	})
 	sizeRow := container.NewGridWithColumns(2, fontDown, fontUp)
@@ -556,6 +582,11 @@ func (r *ReaderApp) showOptionsDialog() {
 				}
 			}
 		}
+		
+		// Remove system overlay flags and safely switch context back to book view
+		r.rt.isConfiguring = false
+		r.myApp.Settings().SetTheme(r.rt)
+		
 		r.render()
 		r.saveStateToDisk()
 	})
@@ -566,7 +597,11 @@ func (r *ReaderApp) showOptionsDialog() {
 func (r *ReaderApp) applyTypographyRules() {
 	r.rt.fontStyle.Bold = r.isBold
 	r.textLabel.TextStyle = r.rt.fontStyle
-	r.myApp.Settings().SetTheme(r.rt)
+	
+	// Triggers layout calculation logic for active viewport objects without impacting settings panel sizes
+	if !r.rt.isConfiguring {
+		r.myApp.Settings().SetTheme(r.rt)
+	}
 	r.render()
 }
 
@@ -686,7 +721,6 @@ func (r *ReaderApp) render() {
 	} else {
 		text := currentPageContent.Text
 		if r.isJustified {
-			// Fluid adjustment wrapper calculations
 			text = justifyTextBlock(text, int(r.window.Canvas().Size().Width)/10)
 		}
 		r.textLabel.SetText(text)
