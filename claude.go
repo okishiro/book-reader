@@ -70,53 +70,59 @@ func (s *SwipeableCanvas) DragEnd() {
 }
 
 // ────────────────────────────────────────────────────────────────
-//  Fixed layout — Aligns blocks in the center of mobile screen
+//  Fluid Mobile Scaling Layouts (Replaces hardcoded sizing)
 // ────────────────────────────────────────────────────────────────
 
-type fixedLayout struct{ size fyne.Size }
+type fluidMobileLayout struct{}
 
-func (f fixedLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
-	posX := (parentSize.Width - f.size.Width) / 2
-	posY := (parentSize.Height - f.size.Height) / 2
+func (f fluidMobileLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
+	// Dynamically span elements across 92% of the available physical screen width
+	targetW := parentSize.Width * 0.92
+	targetH := parentSize.Height * 0.82
+
+	posX := (parentSize.Width - targetW) / 2
+	posY := (parentSize.Height - targetH) / 2
 
 	for _, o := range objs {
 		o.Move(fyne.NewPos(posX, posY))
-		o.Resize(f.size)
+		o.Resize(fyne.NewSize(targetW, targetH))
 	}
 }
-func (f fixedLayout) MinSize(_ []fyne.CanvasObject) fyne.Size { return f.size }
 
-// ────────────────────────────────────────────────────────────────
-//  5-Zone Dynamic Position Layout
-// ────────────────────────────────────────────────────────────────
+func (f fluidMobileLayout) MinSize(_ []fyne.CanvasObject) fyne.Size {
+	return fyne.NewSize(280, 400) // Safe minimum baseline for compact mobile frames
+}
 
 type zoneLayout struct {
 	zoneIndex int // 0 = Top, 1 = Upper-Mid, 2 = Center, 3 = Lower-Mid, 4 = Bottom
 }
 
 func (z zoneLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
-	// Maps the 5 selections explicitly to screen math multipliers
 	var bias float32
 	switch z.zoneIndex {
 	case 1:
-		bias = 0.25 // Upper-Mid
+		bias = 0.25
 	case 2:
-		bias = 0.50 // Center
+		bias = 0.50
 	case 3:
-		bias = 0.75 // Lower-Mid
+		bias = 0.75
 	case 4:
-		bias = 1.00 // Bottom
+		bias = 1.00
 	default:
-		bias = 0.00 // Top
+		bias = 0.00
 	}
 
 	for _, o := range objs {
 		minSize := o.MinSize()
 		if minSize.Height <= 0 {
-			minSize.Height = 120
+			minSize.Height = 140
 		}
 
-		// Calculate available fluid boundary based directly on current layout dimensions
+		// Always force the text layout container width to track the full screen width
+		if minSize.Width < parentSize.Width {
+			minSize.Width = parentSize.Width
+		}
+
 		availH := parentSize.Height - minSize.Height
 		if availH < 0 {
 			availH = 0
@@ -130,7 +136,7 @@ func (z zoneLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
 
 func (z zoneLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
 	if len(objs) == 0 {
-		return fyne.NewSize(textBoxW-20, textBoxH-20)
+		return fyne.NewSize(280, 140)
 	}
 	return objs[0].MinSize()
 }
@@ -180,16 +186,8 @@ func (t *ReaderTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant)
 }
 
 // ────────────────────────────────────────────────────────────────
-//  Dimensions (Portrait Mobile Viewport)
+//  Data Structs & App Logic Engine
 // ────────────────────────────────────────────────────────────────
-
-const (
-	winW float32 = 390
-	winH float32 = 680
-
-	textBoxW float32 = 358
-	textBoxH float32 = 540
-)
 
 type BookProgress struct {
 	Chapter int `json:"chapter"`
@@ -207,13 +205,13 @@ type PageContent struct {
 }
 
 type ReaderApp struct {
-	rc           *epub.ReadCloser
-	currentBook  string
-	spinePaths   []string
-	currentChap  int
-	pages        []PageContent
-	currentPage  int
-	wordsPerPage int
+	rc            *epub.ReadCloser
+	currentBook   string
+	spinePaths    []string
+	currentChap   int
+	pages         []PageContent
+	currentPage   int
+	wordsPerPage  int
 
 	myApp         fyne.App
 	window        fyne.Window
@@ -233,7 +231,7 @@ type ReaderApp struct {
 	isBold       bool
 	isJustified  bool
 	currentFace  string
-	selectedZone int // 0 to 4
+	selectedZone int
 }
 
 func main() {
@@ -248,23 +246,22 @@ func main() {
 	}
 	myApp.Settings().SetTheme(rt)
 
-	dir := "./library"
+	// Contextual safe internal app path fallback
+	dir := filepath.Join(myApp.Storage().RootURI().Path(), "library")
 	_ = os.MkdirAll(dir, 0755)
 	dbFilePath := filepath.Join(dir, "state.json")
 
 	state := &ReaderApp{
-		myApp:        myApp,
-		window:       myWindow,
-		rt:           rt,
-		epubsDir:     dir,
-		dbPath:       dbFilePath,
-		chapCache:    make(map[int][]PageContent),
-		wordsPerPage: 55,
-		currentFace:  "Sans-Serif",
-		selectedZone: 0, // Default to Top Position
-		trackingState: AppStateData{
-			BookTracking: make(map[string]BookProgress),
-		},
+		myApp:         myApp,
+		window:        myWindow,
+		rt:            rt,
+		epubsDir:      dir,
+		dbPath:        dbFilePath,
+		chapCache:     make(map[int][]PageContent),
+		wordsPerPage:  55,
+		currentFace:   "Sans-Serif",
+		selectedZone:  0,
+		trackingState: AppStateData{BookTracking: make(map[string]BookProgress)},
 	}
 
 	state.loadStateFromFile()
@@ -279,8 +276,7 @@ func main() {
 	})
 
 	myWindow.SetContent(state.buildLibraryScreen())
-	myWindow.SetFixedSize(true)
-	myWindow.Resize(fyne.NewSize(winW, winH))
+	myWindow.Resize(fyne.NewSize(390, 680))
 	myWindow.CenterOnScreen()
 	myWindow.ShowAndRun()
 
@@ -294,10 +290,6 @@ func (r *ReaderApp) handleMobileBackGesture() {
 	r.inReaderView = false
 	r.window.SetContent(r.buildLibraryScreen())
 }
-
-// ────────────────────────────────────────────────────────────────
-//  Persistence Engine
-// ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) loadStateFromFile() {
 	file, err := os.Open(r.dbPath)
@@ -335,7 +327,7 @@ func (r *ReaderApp) saveStateToDisk() {
 }
 
 // ────────────────────────────────────────────────────────────────
-//  Screen: Library
+//  Screen Layout: Library View
 // ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
@@ -354,7 +346,13 @@ func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 			}
 			defer uc.Close()
 
-			dstPath := filepath.Join(r.epubsDir, uc.URI().Name())
+			fileName := uc.URI().Name()
+			if !strings.HasSuffix(strings.ToLower(fileName), ".epub") {
+				dialog.ShowError(fmt.Errorf("Selected file is not a valid ePub package"), r.window)
+				return
+			}
+
+			dstPath := filepath.Join(r.epubsDir, fileName)
 			out, err := os.Create(dstPath)
 			if err != nil {
 				dialog.ShowError(err, r.window)
@@ -392,7 +390,7 @@ func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 		r.openBook(r.available[id])
 	}
 
-	emptyMsg := widget.NewLabel("Drop .epub files into ./library/\nor use Import above.")
+	emptyMsg := widget.NewLabel("No local books imported yet.\nUse the Import button above.")
 	emptyMsg.Alignment = fyne.TextAlignCenter
 	emptyMsg.Wrapping = fyne.TextWrapWord
 	emptyMsg.TextStyle = fyne.TextStyle{Italic: true}
@@ -414,14 +412,11 @@ func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 	bg := canvas.NewRectangle(color.Black)
 	content := container.NewBorder(topBar, nil, nil, nil, container.NewPadded(body))
 
-	return container.New(fixedLayout{fyne.NewSize(winW, winH)},
-		bg,
-		content,
-	)
+	return container.NewMax(bg, content)
 }
 
 // ────────────────────────────────────────────────────────────────
-//  Screen: Reader
+//  Screen Layout: EPub Book Reader View
 // ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
@@ -435,8 +430,6 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 	r.imageCanvas.FillMode = canvas.ImageFillContain
 
 	r.contentBox = container.NewMax(r.textLabel)
-
-	// Custom 5-zone mathematical anchoring container layout wrapper
 	r.zoneAdjust = container.New(zoneLayout{zoneIndex: r.selectedZone}, r.contentBox)
 
 	optionsBtn := widget.NewButtonWithIcon("", theme.SettingsIcon(), func() {
@@ -445,16 +438,8 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 
 	topBarLayout := container.NewBorder(nil, nil, nil, optionsBtn, container.NewCenter(canvas.NewText(" ", color.Transparent)))
 
-	textClampedBlock := container.New(
-		fixedLayout{fyne.NewSize(textBoxW - 20, textBoxH - 20)},
-		r.zoneAdjust,
-	)
-
-	cardContentLayout := container.New(
-		fixedLayout{fyne.NewSize(textBoxW, textBoxH)},
-		canvas.NewRectangle(color.Black),
-		textClampedBlock,
-	)
+	textClampedBlock := container.New(fluidMobileLayout{}, r.zoneAdjust)
+	cardContentLayout := container.NewMax(canvas.NewRectangle(color.Black), textClampedBlock)
 
 	gestureSurface := NewSwipeableCanvas(cardContentLayout,
 		func() { r.turnPage(1) },
@@ -462,17 +447,13 @@ func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 	)
 
 	bg := canvas.NewRectangle(color.Black)
-
 	inner := container.NewBorder(
 		container.NewVBox(container.NewPadded(topBarLayout), widget.NewSeparator()),
 		nil, nil, nil,
 		gestureSurface,
 	)
 
-	return container.New(fixedLayout{fyne.NewSize(winW, winH)},
-		bg,
-		inner,
-	)
+	return container.NewMax(bg, inner)
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -513,7 +494,6 @@ func (r *ReaderApp) showOptionsDialog() {
 	})
 	justifyCheck.SetChecked(r.isJustified)
 
-	// 5-ZONE EXPLICIT ALIGNMENT SELECTION OVERLAY
 	zoneSelect := widget.NewSelect([]string{"Top", "Upper-Mid", "Center", "Lower-Mid", "Bottom"}, func(chosen string) {
 		switch chosen {
 		case "Upper-Mid":
@@ -525,13 +505,12 @@ func (r *ReaderApp) showOptionsDialog() {
 		case "Bottom":
 			r.selectedZone = 4
 		default:
-			r.selectedZone = 0 // Top
+			r.selectedZone = 0
 		}
 		r.zoneAdjust.Layout = zoneLayout{zoneIndex: r.selectedZone}
 		r.zoneAdjust.Refresh()
 	})
 
-	// Safely map active position string variant to overlay select value initialization
 	var zoneString string
 	switch r.selectedZone {
 	case 1:
@@ -580,7 +559,7 @@ func (r *ReaderApp) showOptionsDialog() {
 		r.render()
 		r.saveStateToDisk()
 	})
-	d.Resize(fyne.NewSize(330, 360))
+	d.Resize(fyne.NewSize(310, 350))
 	d.Show()
 }
 
@@ -592,7 +571,7 @@ func (r *ReaderApp) applyTypographyRules() {
 }
 
 // ────────────────────────────────────────────────────────────────
-//  Book loading
+//  EPub Core Integration Backend Parser
 // ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) openBook(filename string) {
@@ -631,8 +610,7 @@ func (r *ReaderApp) openBook(filename string) {
 	r.spinePaths = spinePaths
 	r.chapCache = make(map[int][]PageContent)
 
-	screen := r.buildReaderScreen()
-	r.window.SetContent(screen)
+	r.window.SetContent(r.buildReaderScreen())
 
 	savedProgress, found := r.trackingState.BookTracking[filename]
 	if found {
@@ -647,10 +625,6 @@ func (r *ReaderApp) openBook(filename string) {
 		r.loadChapter(0)
 	}
 }
-
-// ────────────────────────────────────────────────────────────────
-//  Navigation & Rendering
-// ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) loadChapter(idx int) {
 	if r.rc == nil || idx < 0 || idx >= len(r.spinePaths) {
@@ -712,7 +686,8 @@ func (r *ReaderApp) render() {
 	} else {
 		text := currentPageContent.Text
 		if r.isJustified {
-			text = justifyTextBlock(text, int(textBoxW)/9)
+			// Fluid adjustment wrapper calculations
+			text = justifyTextBlock(text, int(r.window.Canvas().Size().Width)/10)
 		}
 		r.textLabel.SetText(text)
 		r.contentBox.Add(r.textLabel)
@@ -721,14 +696,9 @@ func (r *ReaderApp) render() {
 
 	r.contentBox.Refresh()
 	if r.zoneAdjust != nil {
-		r.zoneAdjust.Layout = zoneLayout{zoneIndex: r.selectedZone}
 		r.zoneAdjust.Refresh()
 	}
 }
-
-// ────────────────────────────────────────────────────────────────
-//  Paging & Parsing Logic
-// ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) chapPages(idx int) []PageContent {
 	if cached, ok := r.chapCache[idx]; ok {
