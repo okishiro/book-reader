@@ -29,132 +29,63 @@ import (
 	"github.com/taylorskalyo/goreader/epub"
 )
 
-// ────────────────────────────────────────────────────────────────
-//  Mobile Gesture & Tap Surface (Enhanced Swipe & Tap Support)
-// ────────────────────────────────────────────────────────────────
-
 type SwipeableCanvas struct {
 	widget.BaseWidget
-	content   fyne.CanvasObject
-	onSwipeL  func()
-	onSwipeR  func()
-	dragTotal float32
+	content            fyne.CanvasObject
+	onSwipeL, onSwipeR func()
+	dragTotal          float32
 }
 
-func NewSwipeableCanvas(content fyne.CanvasObject, onLeft, onRight func()) *SwipeableCanvas {
-	s := &SwipeableCanvas{content: content, onSwipeL: onLeft, onSwipeR: onRight}
+func NewSwipeableCanvas(c fyne.CanvasObject, l, r func()) *SwipeableCanvas {
+	s := &SwipeableCanvas{content: c, onSwipeL: l, onSwipeR: r}
 	s.ExtendBaseWidget(s)
 	return s
 }
-
-func (s *SwipeableCanvas) CreateRenderer() fyne.WidgetRenderer {
-	return widget.NewSimpleRenderer(s.content)
-}
-
-func (s *SwipeableCanvas) Dragged(e *fyne.DragEvent) {
-	s.dragTotal += e.Dragged.DX
-}
-
+func (s *SwipeableCanvas) CreateRenderer() fyne.WidgetRenderer { return widget.NewSimpleRenderer(s.content) }
+func (s *SwipeableCanvas) Dragged(e *fyne.DragEvent)           { s.dragTotal += e.Dragged.DX }
 func (s *SwipeableCanvas) DragEnd() {
-	const swipeThreshold float32 = 30.0
-
-	if s.dragTotal < -swipeThreshold {
-		if s.onSwipeL != nil {
-			s.onSwipeL()
-		}
-	} else if s.dragTotal > swipeThreshold {
-		if s.onSwipeR != nil {
-			s.onSwipeR()
-		}
+	if s.dragTotal < -30.0 && s.onSwipeL != nil {
+		s.onSwipeL()
+	} else if s.dragTotal > 30.0 && s.onSwipeR != nil {
+		s.onSwipeR()
 	}
 	s.dragTotal = 0
 }
-
 func (s *SwipeableCanvas) Tapped(e *fyne.PointEvent) {
-	bounds := s.Size()
-	if e.Position.X < bounds.Width*0.35 {
-		if s.onSwipeR != nil {
-			s.onSwipeR()
-		}
-	} else if e.Position.X > bounds.Width*0.65 {
-		if s.onSwipeL != nil {
-			s.onSwipeL()
-		}
+	w := s.Size().Width
+	if e.Position.X < w*0.35 && s.onSwipeR != nil {
+		s.onSwipeR()
+	} else if e.Position.X > w*0.65 && s.onSwipeL != nil {
+		s.onSwipeL()
 	}
 }
-
-// ────────────────────────────────────────────────────────────────
-//  Fluid Mobile Scaling Layouts 
-// ────────────────────────────────────────────────────────────────
 
 type fluidMobileLayout struct{}
-
-func (f fluidMobileLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
-	targetW := parentSize.Width * 0.92
-	targetH := parentSize.Height * 0.90 
-
-	posX := (parentSize.Width - targetW) / 2
-	posY := (parentSize.Height - targetH) / 2
-
+func (f fluidMobileLayout) MinSize(_ []fyne.CanvasObject) fyne.Size { return fyne.NewSize(280, 400) }
+func (f fluidMobileLayout) Layout(objs []fyne.CanvasObject, size fyne.Size) {
+	tw, th := size.Width*0.92, size.Height*0.90
 	for _, o := range objs {
-		o.Move(fyne.NewPos(posX, posY))
-		o.Resize(fyne.NewSize(targetW, targetH))
+		o.Move(fyne.NewPos((size.Width-tw)/2, (size.Height-th)/2))
+		o.Resize(fyne.NewSize(tw, th))
 	}
 }
 
-func (f fluidMobileLayout) MinSize(_ []fyne.CanvasObject) fyne.Size {
-	return fyne.NewSize(280, 400)
-}
-
-type zoneLayout struct {
-	zoneIndex int
-}
-
-func (z zoneLayout) Layout(objs []fyne.CanvasObject, parentSize fyne.Size) {
-	var bias float32
-	switch z.zoneIndex {
-	case 1:
-		bias = 0.25
-	case 2:
-		bias = 0.50
-	case 3:
-		bias = 0.75
-	case 4:
-		bias = 1.00
-	default:
-		bias = 0.00
-	}
-
-	for _, o := range objs {
-		minSize := o.MinSize()
-		if minSize.Height <= 0 {
-			minSize.Height = 140
-		}
-		if minSize.Width < parentSize.Width {
-			minSize.Width = parentSize.Width
-		}
-
-		availH := parentSize.Height - minSize.Height
-		if availH < 0 {
-			availH = 0
-		}
-
-		posY := availH * bias
-		o.Move(fyne.NewPos(0, posY))
-		o.Resize(fyne.NewSize(parentSize.Width, minSize.Height))
-	}
-}
-
+type zoneLayout struct{ idx int }
 func (z zoneLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
-	if len(objs) == 0 {
-		return fyne.NewSize(280, 140)
-	}
+	if len(objs) == 0 { return fyne.NewSize(280, 140) }
 	return objs[0].MinSize()
 }
-
-// ────────────────────────────────────────────────────────────────
-//  Theme & Typography Configurations
-// ────────────────────────────────────────────────────────────────
+func (z zoneLayout) Layout(objs []fyne.CanvasObject, size fyne.Size) {
+	bias := []float32{0.0, 0.25, 0.50, 0.75, 1.00}[z.idx]
+	for _, o := range objs {
+		h := o.MinSize().Height
+		if h <= 0 { h = 140 }
+		ay := size.Height - h
+		if ay < 0 { ay = 0 }
+		o.Move(fyne.NewPos(0, ay*bias))
+		o.Resize(fyne.NewSize(size.Width, h))
+	}
+}
 
 type ReaderTheme struct {
 	fyne.Theme
@@ -164,54 +95,30 @@ type ReaderTheme struct {
 	isConfiguring bool
 }
 
-func (t *ReaderTheme) Size(name fyne.ThemeSizeName) float32 {
-	if name == theme.SizeNameText && !t.isConfiguring {
-		return t.fontSize
-	}
-	return t.Theme.Size(name)
+func (t *ReaderTheme) Size(n fyne.ThemeSizeName) float32 {
+	if n == theme.SizeNameText && !t.isConfiguring { return t.fontSize }
+	return t.Theme.Size(n)
 }
-
-func (t *ReaderTheme) Font(style fyne.TextStyle) fyne.Resource {
+func (t *ReaderTheme) Font(s fyne.TextStyle) fyne.Resource {
 	if !t.isConfiguring {
-		switch t.fontName {
-		case "Serif":
-			style.Symbol = true
-		case "Monospace":
-			style.Monospace = true
-		}
+		if t.fontName == "Serif" { s.Symbol = true } else if t.fontName == "Monospace" { s.Monospace = true }
 	}
-	return t.Theme.Font(style)
+	return t.Theme.Font(s)
 }
-
-func (t *ReaderTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
-	switch name {
-	case theme.ColorNameBackground:
-		return color.Black
-	case theme.ColorNameForeground:
-		return color.White
-	case theme.ColorNameButton:
-		return color.RGBA{R: 25, G: 25, B: 25, A: 255}
-	case theme.ColorNameDisabledButton:
-		return color.RGBA{R: 12, G: 12, B: 12, A: 255}
-	case theme.ColorNameSeparator:
-		return color.RGBA{R: 45, G: 45, B: 45, A: 255}
+func (t *ReaderTheme) Color(n fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
+	cMap := map[fyne.ThemeColorName]color.Color{
+		theme.ColorNameBackground:     color.Black,
+		theme.ColorNameForeground:     color.White,
+		theme.ColorNameButton:         color.RGBA{25, 25, 25, 255},
+		theme.ColorNameDisabledButton: color.RGBA{12, 12, 12, 255},
+		theme.ColorNameSeparator:      color.RGBA{45, 45, 45, 255},
 	}
-	return t.Theme.Color(name, theme.VariantDark)
+	if c, ok := cMap[n]; ok { return c }
+	return t.Theme.Color(n, theme.VariantDark)
 }
 
-// ────────────────────────────────────────────────────────────────
-//  Data Structs & App Logic Engine
-// ────────────────────────────────────────────────────────────────
-
-type BookProgress struct {
-	Chapter int `json:"chapter"`
-	Page    int `json:"page"`
-}
-
-type AppStateData struct {
-	BookTracking map[string]BookProgress `json:"book_tracking"`
-}
-
+type BookProgress struct{ Chapter, Page int }
+type AppStateData struct{ BookTracking map[string]BookProgress `json:"book_tracking"` }
 type PageContent struct {
 	IsImage bool
 	Text    string
@@ -219,753 +126,286 @@ type PageContent struct {
 }
 
 type ReaderApp struct {
-	rc           *epub.ReadCloser
-	currentBook  string
-	spinePaths   []string
-	currentChap  int
-	pages        []PageContent
-	currentPage  int
-	wordsPerPage int
-
-	myApp         fyne.App
-	window        fyne.Window
-	rt            *ReaderTheme
-	epubsDir      string
-	dbPath        string
-	available     []string
-	chapCache     map[int][]PageContent
-	trackingState AppStateData
-
-	textLabel   *widget.Label
-	imageCanvas *canvas.Image
-	contentBox  *fyne.Container
-	zoneAdjust  *fyne.Container
-
-	inReaderView bool
-	isBold       bool
-	isJustified  bool
-	currentFace  string
-	selectedZone int
+	rc                                 *epub.ReadCloser
+	currentBook, epubsDir, dbPath      string
+	spinePaths, available              []string
+	currentChap, currentPage, wpp      int
+	pages                              []PageContent
+	myApp                              fyne.App
+	window                             fyne.Window
+	rt                                 *ReaderTheme
+	chapCache                          map[int][]PageContent
+	trackingState                      AppStateData
+	textLabel                          *widget.Label
+	imageCanvas                        *canvas.Image
+	contentBox, zoneAdjust             *fyne.Container
+	inReaderView, isBold, isJustified  bool
+	currentFace                        string
+	selectedZone                       int
 }
 
 func main() {
-	myApp := app.New()
-	myWindow := myApp.NewWindow("Reader")
-
-	rt := &ReaderTheme{
-		Theme:     theme.DarkTheme(),
-		fontSize:  17,
-		fontStyle: fyne.TextStyle{},
-		fontName:  "Sans-Serif",
-	}
-	myApp.Settings().SetTheme(rt)
-
-	dir := filepath.Join(myApp.Storage().RootURI().Path(), "library")
+	a := app.New()
+	w := a.NewWindow("Reader")
+	rt := &ReaderTheme{Theme: theme.DarkTheme(), fontSize: 17, fontName: "Sans-Serif"}
+	a.Settings().SetTheme(rt)
+	dir := filepath.Join(a.Storage().RootURI().Path(), "library")
 	_ = os.MkdirAll(dir, 0755)
-	dbFilePath := filepath.Join(dir, "state.json")
-
-	state := &ReaderApp{
-		myApp:         myApp,
-		window:        myWindow,
-		rt:            rt,
-		epubsDir:      dir,
-		dbPath:        dbFilePath,
-		chapCache:     make(map[int][]PageContent),
-		wordsPerPage:  55,
-		currentFace:   "Sans-Serif",
-		selectedZone:  0,
-		trackingState: AppStateData{BookTracking: make(map[string]BookProgress)},
+	r := &ReaderApp{myApp: a, window: w, rt: rt, epubsDir: dir, dbPath: filepath.Join(dir, "state.json"),
+		chapCache: make(map[int][]PageContent), wpp: 55, currentFace: "Sans-Serif", trackingState: AppStateData{make(map[string]BookProgress)}}
+	
+	if f, err := os.Open(r.dbPath); err == nil {
+		_ = json.NewDecoder(f).Decode(&r.trackingState)
+		f.Close()
 	}
-
-	state.loadStateFromFile()
-
-	myWindow.Canvas().SetOnTypedKey(func(k *fyne.KeyEvent) {
-		if k.Name == fyne.KeyEscape || k.Name == "Back" {
-			if state.inReaderView {
-				state.handleMobileBackGesture()
-				return
-			}
-		}
+	w.Canvas().SetOnTypedKey(func(k *fyne.KeyEvent) {
+		if (k.Name == fyne.KeyEscape || k.Name == "Back") && r.inReaderView { r.goBack() }
 	})
-
-	myWindow.SetContent(state.buildLibraryScreen())
-	myWindow.Resize(fyne.NewSize(390, 680))
-	myWindow.CenterOnScreen()
-	myWindow.ShowAndRun()
-
-	if state.rc != nil {
-		state.rc.Close()
-	}
+	w.SetContent(r.buildLibraryScreen())
+	w.Resize(fyne.NewSize(390, 680))
+	w.CenterOnScreen()
+	w.ShowAndRun()
+	if r.rc != nil { r.rc.Close() }
 }
 
-func (r *ReaderApp) handleMobileBackGesture() {
-	r.saveStateToDisk()
-	r.inReaderView = false
-	r.window.SetContent(r.buildLibraryScreen())
-}
-
-func (r *ReaderApp) loadStateFromFile() {
-	file, err := os.Open(r.dbPath)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	decoder := json.NewDecoder(file)
-	_ = decoder.Decode(&r.trackingState)
-	if r.trackingState.BookTracking == nil {
-		r.trackingState.BookTracking = make(map[string]BookProgress)
+func (r *ReaderApp) goBack() { r.save(); r.inReaderView = false; r.window.SetContent(r.buildLibraryScreen()) }
+func (r *ReaderApp) save() {
+	if r.currentBook == "" { return }
+	r.trackingState.BookTracking[r.currentBook] = BookProgress{r.currentChap, r.currentPage}
+	if f, err := os.Create(r.dbPath); err == nil {
+		e := json.NewEncoder(f); e.SetIndent("", "  "); _ = e.Encode(r.trackingState); f.Close()
 	}
 }
-
-func (r *ReaderApp) saveStateToDisk() {
-	if r.currentBook == "" {
-		return
-	}
-
-	r.trackingState.BookTracking[r.currentBook] = BookProgress{
-		Chapter: r.currentChap,
-		Page:    r.currentPage,
-	}
-
-	file, err := os.Create(r.dbPath)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	_ = encoder.Encode(r.trackingState)
-}
-
-// ────────────────────────────────────────────────────────────────
-//  Screen Layout: Library View
-// ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) buildLibraryScreen() fyne.CanvasObject {
 	r.inReaderView = false
-	r.refreshLibrary()
-
-	title := canvas.NewText("MY LIBRARY", color.White)
-	title.TextSize = 18
-	title.TextStyle = fyne.TextStyle{Bold: true}
-	title.Alignment = fyne.TextAlignCenter
-
-	importBtn := widget.NewButton("+ Import ePub", func() {
+	files, _ := os.ReadDir(r.epubsDir)
+	r.available = nil
+	for _, f := range files {
+		if !f.IsDir() && strings.HasSuffix(strings.ToLower(f.Name()), ".epub") { r.available = append(r.available, f.Name()) }
+	}
+	t := canvas.NewText("MY LIBRARY", color.White); t.TextSize = 18; t.TextStyle.Bold = true; t.Alignment = fyne.TextAlignCenter
+	btn := widget.NewButton("+ Import ePub", func() {
 		fd := dialog.NewFileOpen(func(uc fyne.URIReadCloser, err error) {
-			if err != nil || uc == nil {
-				return
-			}
+			if err != nil || uc == nil { return }
 			defer uc.Close()
-
-			ext := strings.ToLower(uc.URI().Extension())
-			isEpubMime := strings.Contains(strings.ToLower(uc.URI().MimeType()), "epub")
-
-			if ext != ".epub" && !isEpubMime {
-				dialog.ShowError(fmt.Errorf("Selected file is not a valid ePub package"), r.window)
-				return
+			n := uc.URI().Name()
+			if !strings.HasSuffix(strings.ToLower(n), ".epub") { n += ".epub" }
+			if dst, err := os.Create(filepath.Join(r.epubsDir, n)); err == nil {
+				_, _ = io.Copy(dst, uc); dst.Close(); r.window.SetContent(r.buildLibraryScreen())
 			}
-
-			fileName := uc.URI().Name()
-			if !strings.HasSuffix(strings.ToLower(fileName), ".epub") {
-				fileName = fileName + ".epub"
-			}
-
-			dstPath := filepath.Join(r.epubsDir, fileName)
-			out, err := os.Create(dstPath)
-			if err != nil {
-				dialog.ShowError(err, r.window)
-				return
-			}
-			defer out.Close()
-
-			if _, err := io.Copy(out, uc); err != nil {
-				dialog.ShowError(err, r.window)
-				return
-			}
-
-			r.window.SetContent(r.buildLibraryScreen())
 		}, r.window)
-		fd.SetFilter(storage.NewExtensionFileFilter([]string{".epub", ".EPUB"}))
-		fd.Show()
+		fd.SetFilter(storage.NewExtensionFileFilter([]string{".epub", ".EPUB"})); fd.Show()
 	})
-	importBtn.Importance = widget.HighImportance
+	btn.Importance = widget.HighImportance
 
-	list := widget.NewList(
-		func() int { return len(r.available) },
-		func() fyne.CanvasObject {
-			lbl := widget.NewLabel("")
-			lbl.Truncation = fyne.TextTruncateEllipsis
-			return lbl
-		},
+	list := widget.NewList(func() int { return len(r.available) },
+		func() fyne.CanvasObject { l := widget.NewLabel(""); l.Truncation = fyne.TextTruncateEllipsis; return l },
 		func(id widget.ListItemID, o fyne.CanvasObject) {
-			name := r.available[id]
-			var display string
-			if strings.HasSuffix(strings.ToLower(name), ".epub") {
-				display = name[:len(name)-5]
-			} else {
-				display = name
-			}
-			o.(*widget.Label).SetText(display)
-		},
-	)
-	list.OnSelected = func(id widget.ListItemID) {
-		list.UnselectAll()
-		r.openBook(r.available[id])
-	}
-
-	emptyMsg := widget.NewLabel("No local books imported yet.\nUse the Import button above.")
-	emptyMsg.Alignment = fyne.TextAlignCenter
-	emptyMsg.Wrapping = fyne.TextWrapWord
-	emptyMsg.TextStyle = fyne.TextStyle{Italic: true}
-
-	var body fyne.CanvasObject
+			n := r.available[id]
+			if strings.HasSuffix(strings.ToLower(n), ".epub") { n = n[:len(n)-5] }
+			o.(*widget.Label).SetText(n)
+		})
+	list.OnSelected = func(id widget.ListItemID) { list.UnselectAll(); r.openBook(r.available[id]) }
+	
+	var body fyne.CanvasObject = list
 	if len(r.available) == 0 {
-		body = container.NewCenter(emptyMsg)
-	} else {
-		body = list
+		m := widget.NewLabel("No local books imported yet.\nUse the Import button above."); m.Alignment, m.Wrapping, m.TextStyle.Italic = fyne.TextAlignCenter, fyne.TextWrapWord, true
+		body = container.NewCenter(m)
 	}
-
-	topBar := container.NewVBox(
-		container.NewCenter(title),
-		widget.NewSeparator(),
-		container.NewPadded(importBtn),
-		widget.NewSeparator(),
-	)
-
-	bg := canvas.NewRectangle(color.Black)
-	content := container.NewBorder(topBar, nil, nil, nil, container.NewPadded(body))
-
-	return container.NewMax(bg, content)
+	return container.NewMax(canvas.NewRectangle(color.Black), container.NewBorder(container.NewVBox(container.NewCenter(t), widget.NewSeparator(), container.NewPadded(btn), widget.NewSeparator()), nil, nil, nil, container.NewPadded(body)))
 }
-
-// ────────────────────────────────────────────────────────────────
-//  Screen Layout: EPub Book Reader View
-// ────────────────────────────────────────────────────────────────
 
 func (r *ReaderApp) buildReaderScreen() fyne.CanvasObject {
 	r.inReaderView = true
-
-	r.textLabel = widget.NewLabel("")
-	r.textLabel.Wrapping = fyne.TextWrapWord
-	r.textLabel.Alignment = fyne.TextAlignLeading
-	r.textLabel.TextStyle = r.rt.fontStyle
-
-	r.imageCanvas = canvas.NewImageFromImage(nil)
-	r.imageCanvas.FillMode = canvas.ImageFillContain
-
+	r.textLabel = widget.NewLabel(""); r.textLabel.Wrapping, r.textLabel.Alignment, r.textLabel.TextStyle = fyne.TextWrapWord, fyne.TextAlignLeading, r.rt.fontStyle
+	r.imageCanvas = canvas.NewImageFromImage(nil); r.imageCanvas.FillMode = canvas.ImageFillContain
 	r.contentBox = container.NewMax(r.textLabel)
-	r.zoneAdjust = container.New(zoneLayout{zoneIndex: r.selectedZone}, r.contentBox)
-
-	optionsBtn := widget.NewButtonWithIcon("", theme.SettingsIcon(), func() {
-		r.showOptionsDialog()
-	})
-
-	backBtn := widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
-		r.handleMobileBackGesture()
-	})
-	backBtn.Importance = widget.LowImportance
-
-	topBarLayout := container.NewBorder(nil, nil, backBtn, optionsBtn, container.NewCenter(canvas.NewText(" ", color.Transparent)))
-
-	textClampedBlock := container.New(fluidMobileLayout{}, r.zoneAdjust)
-	cardContentLayout := container.NewMax(canvas.NewRectangle(color.Black), textClampedBlock)
-
-	gestureSurface := NewSwipeableCanvas(cardContentLayout,
-		func() { r.turnPage(1) },
-		func() { r.turnPage(-1) },
-	)
-
-	bg := canvas.NewRectangle(color.Black)
-	inner := container.NewBorder(
-		container.NewVBox(container.NewPadded(topBarLayout), widget.NewSeparator()),
-		nil, nil, nil,
-		gestureSurface,
-	)
-
-	return container.NewMax(bg, inner)
+	r.zoneAdjust = container.New(zoneLayout{r.selectedZone}, r.contentBox)
+	
+	bBtn := widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() { r.goBack() }); bBtn.Importance = widget.LowImportance
+	oBtn := widget.NewButtonWithIcon("", theme.SettingsIcon(), func() { r.showOptions() })
+	
+	return container.NewMax(canvas.NewRectangle(color.Black), container.NewBorder(container.NewVBox(container.NewPadded(container.NewBorder(nil, nil, bBtn, oBtn, container.NewCenter(canvas.NewText(" ", color.Transparent)))), widget.NewSeparator()), nil, nil, nil, NewSwipeableCanvas(container.NewMax(canvas.NewRectangle(color.Black), container.New(fluidMobileLayout{}, r.zoneAdjust)), func() { r.turnPage(1) }, func() { r.turnPage(-1) })))
 }
 
-// ────────────────────────────────────────────────────────────────
-//  Configuration Overlay Options Form
-// ────────────────────────────────────────────────────────────────
-
-func (r *ReaderApp) showOptionsDialog() {
-	r.rt.isConfiguring = true
-	r.myApp.Settings().SetTheme(r.rt)
-
-	fontDown := widget.NewButton("A-", func() {
-		if r.rt.fontSize > 11 {
-			r.rt.fontSize -= 1
-			r.applyTypographyRules()
-		}
-	})
-	fontUp := widget.NewButton("A+", func() {
-		if r.rt.fontSize < 30 {
-			r.rt.fontSize += 1
-			r.applyTypographyRules()
-		}
-	})
-	sizeRow := container.NewGridWithColumns(2, fontDown, fontUp)
-
-	boldCheck := widget.NewCheck("Bold Text", func(checked bool) {
-		r.isBold = checked
-		r.applyTypographyRules()
-	})
-	boldCheck.SetChecked(r.isBold)
-
-	justifyCheck := widget.NewCheck("Justified Text", func(checked bool) {
-		r.isJustified = checked
-		if r.isJustified {
-			r.textLabel.Alignment = fyne.TextAlignLeading
-		} else {
-			r.textLabel.Alignment = fyne.TextAlignCenter
-		}
+func (r *ReaderApp) showOptions() {
+	r.rt.isConfiguring = true; r.myApp.Settings().SetTheme(r.rt)
+	ch := func(d float32) func() { return func() { if r.rt.fontSize+d >= 11 && r.rt.fontSize+d <= 30 { r.rt.fontSize += d; r.upTypo() } } }
+	
+	bChk := widget.NewCheck("Bold Text", func(c bool) { r.isBold = c; r.upTypo() }); bChk.SetChecked(r.isBold)
+	jChk := widget.NewCheck("Justified Text", func(c bool) {
+		r.isJustified = c
+		if c { r.textLabel.Alignment = fyne.TextAlignLeading } else { r.textLabel.Alignment = fyne.TextAlignCenter }
 		r.render()
-	})
-	justifyCheck.SetChecked(r.isJustified)
-
-	zoneSelect := widget.NewSelect([]string{"Top", "Upper-Mid", "Center", "Lower-Mid", "Bottom"}, func(chosen string) {
-		switch chosen {
-		case "Upper-Mid":
-			r.selectedZone = 1
-		case "Center":
-			r.selectedZone = 2
-		case "Lower-Mid":
-			r.selectedZone = 3
-		case "Bottom":
-			r.selectedZone = 4
-		default:
-			r.selectedZone = 0
-		}
-		r.zoneAdjust.Layout = zoneLayout{zoneIndex: r.selectedZone}
-		r.zoneAdjust.Refresh()
-	})
-
-	var zoneString string
-	switch r.selectedZone {
-	case 1:
-		zoneString = "Upper-Mid"
-	case 2:
-		zoneString = "Center"
-	case 3:
-		zoneString = "Lower-Mid"
-	case 4:
-		zoneString = "Bottom"
-	default:
-		zoneString = "Top"
-	}
-	zoneSelect.SetSelected(zoneString)
-
-	fontFaceSelect := widget.NewSelect([]string{"Sans-Serif", "Serif", "Monospace"}, func(chosen string) {
-		r.currentFace = chosen
-		r.rt.fontName = chosen
-		r.applyTypographyRules()
-	})
-	fontFaceSelect.SetSelected(r.currentFace)
-
-	wordsEntry := widget.NewEntry()
-	wordsEntry.SetText(strconv.Itoa(r.wordsPerPage))
-
-	// Setup Numerical Page Jump Calculations
-	globalCurrentPage := 1
-	for i := 0; i < r.currentChap; i++ {
-		globalCurrentPage += len(r.chapPages(i))
-	}
-	globalCurrentPage += r.currentPage
-
-	globalTotalPages := 0
+	}); jChk.SetChecked(r.isJustified)
+	
+	zSel := widget.NewSelect([]string{"Top", "Upper-Mid", "Center", "Lower-Mid", "Bottom"}, func(s string) {
+		r.selectedZone = map[string]int{"Top": 0, "Upper-Mid": 1, "Center": 2, "Lower-Mid": 3, "Bottom": 4}[s]
+		r.zoneAdjust.Layout = zoneLayout{r.selectedZone}; r.zoneAdjust.Refresh()
+	}); zSel.SetSelected([]string{"Top", "Upper-Mid", "Center", "Lower-Mid", "Bottom"}[r.selectedZone])
+	
+	fSel := widget.NewSelect([]string{"Sans-Serif", "Serif", "Monospace"}, func(s string) { r.currentFace, r.rt.fontName = s, s; r.upTypo() }); fSel.SetSelected(r.currentFace)
+	wEnt := widget.NewEntry(); wEnt.SetText(strconv.Itoa(r.wpp))
+	
+	gCur, gTot := 1, 0
 	for i := 0; i < len(r.spinePaths); i++ {
-		globalTotalPages += len(r.chapPages(i))
+		sz := len(r.getChap(i))
+		if i < r.currentChap { gCur += sz }
+		gTot += sz
 	}
-	if globalTotalPages == 0 {
-		globalTotalPages = 1
-	}
-
-	pageEntry := widget.NewEntry()
-	pageEntry.SetText(strconv.Itoa(globalCurrentPage))
-	pageLimitHint := widget.NewLabel(fmt.Sprintf("/ %d", globalTotalPages))
-	pageRow := container.NewBorder(nil, nil, nil, pageLimitHint, pageEntry)
-
-	optionsForm := widget.NewForm(
-		widget.NewFormItem("Font Face", fontFaceSelect),
-		widget.NewFormItem("Text Scaling", sizeRow),
-		widget.NewFormItem("Format Style", container.NewVBox(boldCheck, justifyCheck)),
-		widget.NewFormItem("Shift Text Location", zoneSelect),
-		widget.NewFormItem("Words Per Page", wordsEntry),
-		widget.NewFormItem("Go to Page #", pageRow),
-	)
-
-	d := dialog.NewCustom("Text Options", "Save & Apply", optionsForm, r.window)
+	if gTot == 0 { gTot = 1 }
+	gCur += r.currentPage
+	
+	pEnt := widget.NewEntry(); pEnt.SetText(strconv.Itoa(gCur))
+	d := dialog.NewCustom("Text Options", "Save & Apply", widget.NewForm(widget.NewFormItem("Font Face", fSel), widget.NewFormItem("Text Scaling", container.NewGridWithColumns(2, widget.NewButton("A-", ch(-1)), widget.NewButton("A+", ch(1)))), widget.NewFormItem("Format Style", container.NewVBox(bChk, jChk)), widget.NewFormItem("Shift Text Location", zSel), widget.NewFormItem("Words Per Page", wEnt), widget.NewFormItem("Go to Page #", container.NewBorder(nil, nil, nil, widget.NewLabel(fmt.Sprintf("/ %d", gTot)), pEnt))), r.window)
 	d.SetOnClosed(func() {
-		if val, err := strconv.Atoi(strings.TrimSpace(wordsEntry.Text)); err == nil && val > 5 {
-			if r.wordsPerPage != val {
-				r.wordsPerPage = val
-				r.chapCache = make(map[int][]PageContent)
-				r.pages = r.chapPages(r.currentChap)
-				if r.currentPage >= len(r.pages) {
-					r.currentPage = 0
-				}
+		if v, err := strconv.Atoi(strings.TrimSpace(wEnt.Text)); err == nil && v > 5 && r.wpp != v {
+			r.wpp = v; r.chapCache = make(map[int][]PageContent); r.pages = r.getChap(r.currentChap)
+			if r.currentPage >= len(r.pages) { r.currentPage = 0 }
+		}
+		if tp, err := strconv.Atoi(strings.TrimSpace(pEnt.Text)); err == nil {
+			if tp < 1 { tp = 1 } else if tp > gTot { tp = gTot }
+			sum := 0
+			for c := 0; c < len(r.spinePaths); c++ {
+				sz := len(r.getChap(c))
+				if sum+sz >= tp { r.currentChap, r.pages, r.currentPage = c, r.getChap(c), (tp-1)-sum; break }
+				sum += sz
 			}
 		}
-
-		// Calculate exact landing coordinates from your numerical input entry
-		if targetPg, err := strconv.Atoi(strings.TrimSpace(pageEntry.Text)); err == nil {
-			if targetPg < 1 {
-				targetPg = 1
-			}
-			if targetPg > globalTotalPages {
-				targetPg = globalTotalPages
-			}
-
-			// Trace page input index backwards into your chapter spine layout structures
-			runningSum := 0
-			for cIdx := 0; cIdx < len(r.spinePaths); cIdx++ {
-				chSz := len(r.chapPages(cIdx))
-				if runningSum+chSz >= targetPg {
-					r.currentChap = cIdx
-					r.pages = r.chapPages(cIdx)
-					r.currentPage = (targetPg - 1) - runningSum
-					break
-				}
-				runningSum += chSz
-			}
-		}
-		
-		r.rt.isConfiguring = false
-		r.myApp.Settings().SetTheme(r.rt)
-		
-		r.render()
-		r.saveStateToDisk()
+		r.rt.isConfiguring = false; r.myApp.Settings().SetTheme(r.rt); r.render(); r.save()
 	})
-	d.Resize(fyne.NewSize(310, 390))
-	d.Show()
+	d.Resize(fyne.NewSize(310, 390)); d.Show()
 }
 
-func (r *ReaderApp) applyTypographyRules() {
-	r.textLabel.TextStyle = r.rt.fontStyle
-	r.rt.fontStyle.Bold = r.isBold
-	if !r.rt.isConfiguring {
-		r.myApp.Settings().SetTheme(r.rt)
-	}
+func (r *ReaderApp) upTypo() {
+	r.textLabel.TextStyle = r.rt.fontStyle; r.rt.fontStyle.Bold = r.isBold
+	if !r.rt.isConfiguring { r.myApp.Settings().SetTheme(r.rt) }
 	r.render()
 }
 
-// ────────────────────────────────────────────────────────────────
-//  EPub Core Integration Backend Parser
-// ────────────────────────────────────────────────────────────────
-
-func (r *ReaderApp) openBook(filename string) {
-	if r.rc != nil {
-		r.rc.Close()
-		r.rc = nil
+func (r *ReaderApp) openBook(fn string) {
+	if r.rc != nil { r.rc.Close() }
+	rc, err := epub.OpenReader(filepath.Join(r.epubsDir, fn))
+	if err != nil || len(rc.Rootfiles) == 0 { return }
+	r.rc, r.currentBook, r.chapCache = rc, fn, make(map[int][]PageContent)
+	m := make(map[string]epub.Item)
+	for _, it := range rc.Rootfiles[0].Manifest.Items { m[it.ID] = it }
+	r.spinePaths = nil
+	for _, s := range rc.Rootfiles[0].Spine.Itemrefs {
+		if it, ok := m[s.IDREF]; ok { r.spinePaths = append(r.spinePaths, it.HREF) }
 	}
-
-	fullPath := filepath.Join(r.epubsDir, filename)
-	rc, err := epub.OpenReader(fullPath)
-	if err != nil {
-		dialog.ShowError(fmt.Errorf("cannot open %s:\n%v", filename, err), r.window)
-		return
-	}
-	if len(rc.Rootfiles) == 0 {
-		dialog.ShowError(fmt.Errorf("invalid ePub: no root file"), r.window)
-		rc.Close()
-		return
-	}
-
-	book := rc.Rootfiles[0]
-	manifestMap := make(map[string]epub.Item)
-	for _, item := range book.Manifest.Items {
-		manifestMap[item.ID] = item
-	}
-
-	var spinePaths []string
-	for _, itemref := range book.Spine.Itemrefs {
-		if item, ok := manifestMap[itemref.IDREF]; ok {
-			spinePaths = append(spinePaths, item.HREF)
-		}
-	}
-
-	r.rc = rc
-	r.currentBook = filename
-	r.spinePaths = spinePaths
-	r.chapCache = make(map[int][]PageContent)
-
 	r.window.SetContent(r.buildReaderScreen())
-
-	savedProgress, found := r.trackingState.BookTracking[filename]
-	if found {
-		r.currentChap = savedProgress.Chapter
-		r.pages = r.chapPages(r.currentChap)
-		r.currentPage = savedProgress.Page
-		if r.currentPage >= len(r.pages) {
-			r.currentPage = 0
-		}
+	if prg, ok := r.trackingState.BookTracking[fn]; ok {
+		r.currentChap, r.pages, r.currentPage = prg.Chapter, r.getChap(prg.Chapter), prg.Page
+		if r.currentPage >= len(r.pages) { r.currentPage = 0 }
 		r.render()
-	} else {
-		r.loadChapter(0)
-	}
+	} else { r.loadChap(0) }
 }
 
-func (r *ReaderApp) loadChapter(idx int) {
-	if r.rc == nil || idx < 0 || idx >= len(r.spinePaths) {
-		return
-	}
-	r.currentChap = idx
-	r.pages = r.chapPages(idx)
-	r.currentPage = 0
-	r.render()
-	r.saveStateToDisk()
+func (r *ReaderApp) loadChap(idx int) {
+	if idx >= 0 && idx < len(r.spinePaths) { r.currentChap, r.pages, r.currentPage = idx, r.getChap(idx), 0; r.render(); r.save() }
 }
 
-func (r *ReaderApp) turnPage(delta int) {
-	if r.rc == nil {
-		return
+func (r *ReaderApp) turnPage(d int) {
+	n := r.currentPage + d
+	if n < 0 && r.currentChap > 0 {
+		r.currentChap--; r.pages = r.getChap(r.currentChap); r.currentPage = len(r.pages) - 1; r.render(); r.save()
+	} else if n >= len(r.pages) && r.currentChap < len(r.spinePaths)-1 {
+		r.loadChap(r.currentChap + 1)
+	} else if n >= 0 && n < len(r.pages) {
+		r.currentPage = n; r.render(); r.save()
 	}
-	next := r.currentPage + delta
-	if next < 0 {
-		if r.currentChap > 0 {
-			r.currentChap--
-			r.pages = r.chapPages(r.currentChap)
-			r.currentPage = len(r.pages) - 1
-			r.render()
-			r.saveStateToDisk()
-		}
-		return
-	}
-	if next >= len(r.pages) {
-		if r.currentChap < len(r.spinePaths)-1 {
-			r.loadChapter(r.currentChap + 1)
-		}
-		return
-	}
-	r.currentPage = next
-	r.render()
-	r.saveStateToDisk()
 }
 
 func (r *ReaderApp) render() {
-	if r.textLabel == nil || r.contentBox == nil {
-		return
-	}
-
+	if r.textLabel == nil || r.contentBox == nil { return }
 	r.contentBox.Objects = nil
-
 	if len(r.pages) == 0 || r.currentPage >= len(r.pages) {
-		r.textLabel.SetText("(empty page)")
-		r.contentBox.Add(r.textLabel)
-		r.contentBox.Refresh()
-		return
-	}
-
-	currentPageContent := r.pages[r.currentPage]
-
-	if currentPageContent.IsImage {
-		r.imageCanvas.Image = currentPageContent.ImgData
-		r.contentBox.Add(r.imageCanvas)
-		r.imageCanvas.Refresh()
+		r.textLabel.SetText("(empty page)"); r.contentBox.Add(r.textLabel)
+	} else if cp := r.pages[r.currentPage]; cp.IsImage {
+		r.imageCanvas.Image = cp.ImgData; r.contentBox.Add(r.imageCanvas); r.imageCanvas.Refresh()
 	} else {
-		text := currentPageContent.Text
+		txt := cp.Text
 		if r.isJustified {
-			lineWidth := int(r.window.Canvas().Size().Width) / 10
-			if lineWidth < 15 {
-				lineWidth = 35 
-			}
-			text = justifyTextBlock(text, lineWidth)
+			lw := int(r.window.Canvas().Size().Width) / 10
+			if lw < 15 { lw = 35 }
+			txt = justify(txt, lw)
 		}
-		r.textLabel.SetText(text)
-		r.contentBox.Add(r.textLabel)
-		r.textLabel.Refresh()
+		r.textLabel.SetText(txt); r.contentBox.Add(r.textLabel); r.textLabel.Refresh()
 	}
-
 	r.contentBox.Refresh()
-	if r.zoneAdjust != nil {
-		r.zoneAdjust.Refresh()
-	}
+	if r.zoneAdjust != nil { r.zoneAdjust.Refresh() }
 }
 
-func (r *ReaderApp) chapPages(idx int) []PageContent {
-	if cached, ok := r.chapCache[idx]; ok {
-		return cached
+func (r *ReaderApp) getChap(idx int) []PageContent {
+	if cached, ok := r.chapCache[idx]; ok { return cached }
+	var curItems []epub.Item
+	for _, it := range r.rc.Rootfiles[0].Manifest.Items {
+		if it.HREF == r.spinePaths[idx] { curItems = append(curItems, it); break }
 	}
-	pages := r.parseAndPaginateChapter(idx)
-	r.chapCache[idx] = pages
-	return pages
-}
-
-func (r *ReaderApp) parseAndPaginateChapter(idx int) []PageContent {
-	targetPath := r.spinePaths[idx]
-	book := r.rc.Rootfiles[0]
-
-	var targetItem *epub.Item
-	for i := range book.Manifest.Items {
-		if book.Manifest.Items[i].HREF == targetPath {
-			targetItem = &book.Manifest.Items[i]
-			break
-		}
-	}
-
-	if targetItem == nil {
-		return []PageContent{{IsImage: false, Text: "[Missing chapter]"}}
-	}
-
-	fd, err := targetItem.Open()
-	if err != nil {
-		return []PageContent{{IsImage: false, Text: "[Error opening chapter]"}}
-	}
-	defer fd.Close()
-
-	buf := new(strings.Builder)
-	_, _ = io.Copy(buf, fd)
-	htmlContent := buf.String()
-
-	imgRegexp := regexp.MustCompile(`(?i)<img\s+[^>]*src=["']([^"']+)["'][^>]*>|<image\s+[^>]*href=["']([^"']+)["'][^>]*>`)
-	matches := imgRegexp.FindAllStringSubmatch(htmlContent, -1)
-
-	var dynamicPages []PageContent
-
-	for _, match := range matches {
-		imgSrc := match[1]
-		if imgSrc == "" {
-			imgSrc = match[2]
-		}
-		if imgSrc == "" {
-			continue
-		}
-
-		// FIXED: Use standard URL path logic ('path.Join') instead of platform native 'filepath.Join'.
-		// This keeps forward slashes intact on Android containers and avoids target mapping misses.
-		baseDir := path.Dir(targetPath)
-		resolvedImgPath := path.Clean(path.Join(baseDir, imgSrc))
-		imgFilename := path.Base(resolvedImgPath)
-
-		for _, item := range book.Manifest.Items {
-			// FIXED: Enhanced structural fault tolerance. Matches clean targets or fallback filename configurations
-			if item.HREF == resolvedImgPath || strings.EqualFold(item.HREF, resolvedImgPath) || strings.EqualFold(path.Base(item.HREF), imgFilename) {
-				if imgFile, err := item.Open(); err == nil {
-					imgBytes, _ := io.ReadAll(imgFile)
-					imgFile.Close()
-					if decodedImg, _, err := image.Decode(bytes.NewReader(imgBytes)); err == nil {
-						dynamicPages = append(dynamicPages, PageContent{
-							IsImage: true,
-							ImgData: decodedImg,
-						})
-					}
+	if len(curItems) == 0 { return []PageContent{{Text: "[Missing]"}} }
+	fd, err := curItems[0].Open()
+	if err != nil { return []PageContent{{Text: "[Error]"}} }
+	buf := new(strings.Builder); _, _ = io.Copy(buf, fd); fd.Close(); hSrc := buf.String()
+	
+	var dPgs []PageContent
+	for _, m := range regexp.MustCompile(`(?i)<img\s+[^>]*src=["']([^"']+)["'][^>]*>|<image\s+[^>]*href=["']([^"']+)["'][^>]*>`).FindAllStringSubmatch(hSrc, -1) {
+		src := m[1]; if src == "" { src = m[2] }
+		if src == "" { continue }
+		rImg := path.Clean(path.Join(path.Dir(r.spinePaths[idx]), src))
+		for _, it := range r.rc.Rootfiles[0].Manifest.Items {
+			if it.HREF == rImg || strings.EqualFold(it.HREF, rImg) || strings.EqualFold(path.Base(it.HREF), path.Base(rImg)) {
+				if f, err := it.Open(); err == nil {
+					b, _ := io.ReadAll(f); f.Close()
+					if dec, _, err := image.Decode(bytes.NewReader(b)); err == nil { dPgs = append(dPgs, PageContent{IsImage: true, ImgData: dec}) }
 				}
 				break
 			}
 		}
 	}
-
-	plainText := htmlToPlainText(htmlContent)
-	words := strings.Fields(plainText)
-
-	if len(words) == 0 && len(dynamicPages) == 0 {
-		return []PageContent{{IsImage: false, Text: "(empty chapter)"}}
-	}
-
-	for i := 0; i < len(words); i += r.wordsPerPage {
-		end := i + r.wordsPerPage
-		if end > len(words) {
-			end = len(words)
-		}
-		dynamicPages = append(dynamicPages, PageContent{
-			IsImage: false,
-			Text:     strings.Join(words[i:end], " "),
-		})
-	}
-
-	return dynamicPages
-}
-
-func justifyTextBlock(text string, targetLineWidth int) string {
-	words := strings.Fields(text)
-	if len(words) == 0 || targetLineWidth <= 0 {
-		return text
-	}
-
-	var result strings.Builder
-	var currentLine []string
-	currentLen := 0
-
-	for _, w := range words {
-		if currentLen+len(currentLine)+len(w) > targetLineWidth {
-			if len(currentLine) > 0 {
-				result.WriteString(fillLineSpaces(currentLine, currentLen, targetLineWidth) + "\n")
-				currentLine = []string{w}
-				currentLen = len(w)
-			} else {
-				result.WriteString(w + "\n")
-				currentLine = nil
-				currentLen = 0
-			}
-		} else {
-			currentLine = append(currentLine, w)
-			currentLen += len(w)
-		}
-	}
-	if len(currentLine) > 0 {
-		result.WriteString(strings.Join(currentLine, " "))
-	}
-	return result.String()
-}
-
-func fillLineSpaces(words []string, currentLen, targetWidth int) string {
-	slots := len(words) - 1
-	if slots <= 0 {
-		return strings.Join(words, "")
-	}
-
-	totalSpacesNeeded := targetWidth - currentLen
-	baseSpaces := totalSpacesNeeded / slots
-	remainder := totalSpacesNeeded % slots
-
-	var s strings.Builder
-	for i, w := range words {
-		s.WriteString(w)
-		if i < slots {
-			spacesToInsert := baseSpaces
-			if i < remainder {
-				spacesToInsert++
-			}
-			s.WriteString(strings.Repeat(" ", spacesToInsert))
-		}
-	}
-	return s.String()
-}
-
-func htmlToPlainText(src string) string {
-	src = reBlock(`<style[^>]*>[\s\S]*?</style>`).ReplaceAllString(src, "")
-	src = reBlock(`<script[^>]*>[\s\S]*?</script>`).ReplaceAllString(src, "")
-	src = reBlock(`<h[1-6][^>]*>([\s\S]*?)</h[1-6]>`).ReplaceAllStringFunc(src, func(m string) string {
-		inner := reBlock(`<[^>]*>`).ReplaceAllString(m, "")
-		return " " + strings.ToUpper(strings.TrimSpace(html.UnescapeString(inner))) + " "
+	
+	hSrc = reB(`<style[^>]*>[\s\S]*?</style>`).ReplaceAllString(hSrc, "")
+	hSrc = reB(`<script[^>]*>[\s\S]*?</script>`).ReplaceAllString(hSrc, "")
+	hSrc = reB(`<h[1-6][^>]*>([\s\S]*?)</h[1-6]>`).ReplaceAllStringFunc(hSrc, func(m string) string {
+		return " " + strings.ToUpper(strings.TrimSpace(html.UnescapeString(reB(`<[^>]*>`).ReplaceAllString(m, "")))) + " "
 	})
-	for _, tag := range []string{"p", "div", "section", "article", "blockquote", "li", "tr"} {
-		src = reBlock(`</` + tag + `>`).ReplaceAllString(src, " ")
+	for _, tag := range []string{"p", "div", "section", "article", "blockquote", "li", "tr"} { hSrc = reB(`</` + tag + `>`).ReplaceAllString(hSrc, " ") }
+	w := strings.Fields(strings.TrimSpace(reB(`\s+`).ReplaceAllString(html.UnescapeString(reB(`<[^>]*>`).ReplaceAllString(reB(`<br\s*/?>`).ReplaceAllString(hSrc, " "), "")), " ")))
+	
+	if len(w) == 0 && len(dPgs) == 0 { return []PageContent{{Text: "(empty)"}} }
+	for i := 0; i < len(w); i += r.wpp {
+		e := i + r.wpp; if e > len(w) { e = len(w) }
+		dPgs = append(dPgs, PageContent{Text: strings.Join(w[i:e], " ")})
 	}
-	src = reBlock(`<br\s*/?>`).ReplaceAllString(src, " ")
-	src = reBlock(`<[^>]*>`).ReplaceAllString(src, "")
-	src = html.UnescapeString(src)
-	src = reBlock(`\s+`).ReplaceAllString(src, " ")
-	return strings.TrimSpace(src)
+	r.chapCache[idx] = dPgs
+	return dPgs
 }
 
-func reBlock(pattern string) *regexp.Regexp {
-	return regexp.MustCompile(`(?i)` + pattern)
+func justify(t string, lw int) string {
+	w := strings.Fields(t); if len(w) == 0 || lw <= 0 { return t }
+	var res strings.Builder
+	var line []string
+	cl := 0
+	for _, s := range w {
+		if cl+len(line)+len(s) > lw {
+			if len(line) > 0 {
+				sk := len(line) - 1
+				if sk <= 0 { res.WriteString(strings.Join(line, "") + "\n") } else {
+					tot := lw - cl; b, r := tot/sk, tot%sk
+					var sB strings.Builder
+					for i, p := range line {
+						sB.WriteString(p)
+						if i < sk { sp := b; if i < r { sp++ }; sB.WriteString(strings.Repeat(" ", sp)) }
+					}
+					res.WriteString(sB.String() + "\n")
+				}
+				line, cl = []string{s}, len(s)
+			} else { res.WriteString(s + "\n"); line, cl = nil, 0 }
+		} else { line = append(line, s); cl += len(s) }
+	}
+	if len(line) > 0 { res.WriteString(strings.Join(line, " ")) }
+	return res.String()
 }
 
-func (r *ReaderApp) refreshLibrary() {
-	files, _ := os.ReadDir(r.epubsDir)
-	var list []string
-	for _, f := range files {
-		if !f.IsDir() {
-			lowerName := strings.ToLower(f.Name())
-			if strings.HasSuffix(lowerName, ".epub") {
-				list = append(list, f.Name())
-			}
-		}
-	}
-	r.available = list
-}
+func reB(p string) *regexp.Regexp { return regexp.MustCompile(`(?i)` + p) }
